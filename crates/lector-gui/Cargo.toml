@@ -1,0 +1,8 @@
+[package]
+name = "lector-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lector-core = { path = "../lector-core" }
+iced = { version = "0.14", features = ["markdown", "highlighter"] }

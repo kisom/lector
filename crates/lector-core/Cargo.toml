@@ -1,0 +1,8 @@
+[package]
+name = "lector-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pulldown-cmark = "0.12"
+thiserror = "2"
