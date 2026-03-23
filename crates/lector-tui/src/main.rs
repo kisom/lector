@@ -30,6 +30,7 @@ struct App {
     tree_scroll: usize,
     tree_area: Rect,
     show_help: bool,
+    show_tree: bool,
     running: bool,
 }
 
@@ -87,14 +88,17 @@ impl App {
             tree_scroll: 0,
             tree_area: Rect::default(),
             show_help: false,
+            show_tree: true,
             running: true,
         }
     }
 
     fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        if !self.show_tree {
+            return;
+        }
         match kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Click in the tree pane
                 if column >= self.tree_area.x
                     && column < self.tree_area.x + self.tree_area.width
                     && row >= self.tree_area.y
@@ -179,6 +183,14 @@ impl App {
                 self.scroll_offset = 0;
             }
             Action::ShowHelp => self.show_help = !self.show_help,
+            Action::ToggleTree => {
+                self.show_tree = !self.show_tree;
+                if self.show_tree {
+                    let _ = execute!(io::stdout(), crossterm::event::EnableMouseCapture);
+                } else {
+                    let _ = execute!(io::stdout(), crossterm::event::DisableMouseCapture);
+                }
+            }
             Action::Quit => self.running = false,
             Action::ChangeDirectory => {
                 // TUI directory change not implemented yet
@@ -267,21 +279,24 @@ impl App {
             return;
         }
 
-        // Two-pane layout: tree (25%) | viewer (75%)
-        let tree_on_left = self.config.ui.tree_position != "right";
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
-            .split(area);
+        if self.show_tree {
+            let tree_on_left = self.config.ui.tree_position != "right";
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
+                .split(area);
 
-        let (tree_area, viewer_area) = if tree_on_left {
-            (chunks[0], chunks[1])
+            let (tree_area, viewer_area) = if tree_on_left {
+                (chunks[0], chunks[1])
+            } else {
+                (chunks[1], chunks[0])
+            };
+
+            self.draw_tree(frame, tree_area);
+            self.draw_viewer(frame, viewer_area);
         } else {
-            (chunks[1], chunks[0])
-        };
-
-        self.draw_tree(frame, tree_area);
-        self.draw_viewer(frame, viewer_area);
+            self.draw_viewer(frame, area);
+        }
     }
 
     fn draw_tree(&mut self, frame: &mut Frame, area: Rect) {
@@ -325,7 +340,6 @@ impl App {
             Style::default().fg(Color::DarkGray)
         };
 
-        // Save area for mouse hit testing
         self.tree_area = area;
 
         // Scroll tree to keep cursor visible
@@ -410,6 +424,7 @@ impl App {
             ("Tab", "Toggle pane focus"),
             ("Enter", "Open / toggle (tree)"),
             ("C-w", "Close file"),
+            ("C-t", "Toggle tree pane"),
             ("C-h", "Toggle help"),
             ("q / C-x C-c", "Quit"),
             ("Escape", "Dismiss / cancel"),
@@ -540,16 +555,14 @@ fn main() -> io::Result<()> {
     )?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    // Main loop
+    // Main loop — no mouse capture so terminal-native text selection works
     while app.running {
         terminal.draw(|frame| app.draw(frame))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => app.handle_key(key),
-                Event::Mouse(mouse) => {
-                    app.handle_mouse(mouse.kind, mouse.column, mouse.row);
-                }
+                Event::Mouse(mouse) => app.handle_mouse(mouse.kind, mouse.column, mouse.row),
                 _ => {}
             }
         }

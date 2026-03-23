@@ -39,6 +39,7 @@ struct App {
     /// When Some, shows a text input for changing directory.
     dir_input: Option<String>,
     show_help: bool,
+    show_tree: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,7 @@ impl App {
                 focus: FocusedPane::Tree,
                 dir_input: None,
                 show_help: false,
+                show_tree: true,
             },
             Task::none(),
         )
@@ -240,6 +242,9 @@ impl App {
             Action::ShowHelp => {
                 self.show_help = !self.show_help;
             }
+            Action::ToggleTree => {
+                self.show_tree = !self.show_tree;
+            }
             Action::Quit => {
                 self.save_position();
                 let _ = self.config.save();
@@ -336,15 +341,18 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let tree_on_left = self.config.ui.tree_position != "right";
-
-        let tree_pane = self.view_tree();
         let viewer_pane = self.view_document();
 
-        let layout = if tree_on_left {
-            Row::new().push(tree_pane).push(viewer_pane)
+        let layout = if self.show_tree {
+            let tree_on_left = self.config.ui.tree_position != "right";
+            let tree_pane = self.view_tree();
+            if tree_on_left {
+                Row::new().push(tree_pane).push(viewer_pane)
+            } else {
+                Row::new().push(viewer_pane).push(tree_pane)
+            }
         } else {
-            Row::new().push(viewer_pane).push(tree_pane)
+            Row::new().push(viewer_pane)
         };
 
         let mut content = Column::new().push(
@@ -402,6 +410,7 @@ impl App {
             ("C-= / C-+", "Increase font size"),
             ("C--", "Decrease font size"),
             ("C-0", "Reset font size"),
+            ("C-t", "Toggle tree pane"),
             ("C-h", "Toggle this help"),
             ("q / C-x C-c", "Quit"),
             ("Escape", "Dismiss dialog / cancel"),

@@ -18,6 +18,7 @@ pub enum Action {
 
     // Pane management
     ToggleFocus,
+    ToggleTree,
 
     // File
     CloseFile,
@@ -140,6 +141,9 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
 
         // C-h to show help
         (true, false, "h") => Some(Action::ShowHelp),
+
+        // C-t to toggle tree pane
+        (true, false, "t") => Some(Action::ToggleTree),
 
         // C-= / C-+ to increase font size, C-- to decrease, C-0 to reset
         (true, false, "=" | "+") => Some(Action::FontSizeIncrease),
