@@ -102,6 +102,16 @@ Three themes are planned:
 
 These will be implemented as custom `markdown::Style` and color palette configurations.
 
-## Persistence (planned)
+## Persistence
 
-SQLite (via `rusqlite`) in the platform data directory for storing file positions between sessions. TOML configuration file for user preferences (tree position, theme, etc.).
+SQLite (via `rusqlite`) in `$XDG_DATA_HOME/lector/positions.db` for file scroll positions. TOML configuration in `$XDG_CONFIG_HOME/lector/config.toml` for user preferences (tree position, font size, etc.). Both saved on quit.
+
+## Planned Future Work
+
+- **Text selection and clipboard copy (GUI)**: iced's markdown widget does not currently support text selection. This would require a custom selectable text widget or upstream iced support.
+- **reStructuredText support**: Add `document/rst.rs` via `rst_parser` crate.
+- **Org-mode support**: Add `document/org.rs` via `orgize` crate.
+- **File watching**: Auto-refresh when files change on disk (via `notify` crate).
+- **Search**: Incremental search within the current document (C-s).
+- **Link following**: Open URLs externally or navigate to local file links.
+- **Table of contents**: Sidebar or overlay showing document heading structure.

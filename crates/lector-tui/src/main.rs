@@ -3,9 +3,9 @@ mod render;
 use std::io;
 use std::path::PathBuf;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::ExecutableCommand;
+use crossterm::execute;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
@@ -27,6 +27,8 @@ struct App {
 
     focus: FocusedPane,
     scroll_offset: usize,
+    tree_scroll: usize,
+    tree_area: Rect,
     show_help: bool,
     running: bool,
 }
@@ -82,8 +84,57 @@ impl App {
             rendered_lines,
             focus: FocusedPane::Tree,
             scroll_offset: 0,
+            tree_scroll: 0,
+            tree_area: Rect::default(),
             show_help: false,
             running: true,
+        }
+    }
+
+    fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        match kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Click in the tree pane
+                if column >= self.tree_area.x
+                    && column < self.tree_area.x + self.tree_area.width
+                    && row >= self.tree_area.y
+                    && row < self.tree_area.y + self.tree_area.height
+                {
+                    self.focus = FocusedPane::Tree;
+                    let clicked_row = (row - self.tree_area.y) as usize;
+                    let flat_idx = self.tree_scroll + clicked_row;
+                    let flat = self.file_tree.flatten(0);
+
+                    if let Some(entry) = flat.get(flat_idx) {
+                        self.tree_cursor = flat_idx;
+                        let path = entry.node.path.clone();
+                        if entry.node.is_dir() {
+                            self.file_tree.toggle_at_path(&path);
+                        } else {
+                            self.open_path(&path);
+                        }
+                    }
+                } else {
+                    self.focus = FocusedPane::Viewer;
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if column < self.tree_area.x + self.tree_area.width {
+                    self.tree_cursor = self.tree_cursor.saturating_sub(3);
+                } else {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(3);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if column < self.tree_area.x + self.tree_area.width {
+                    let max = self.file_tree.flatten(0).len().saturating_sub(1);
+                    self.tree_cursor = (self.tree_cursor + 3).min(max);
+                } else {
+                    self.scroll_offset = (self.scroll_offset + 3)
+                        .min(self.rendered_lines.len().saturating_sub(1));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -208,7 +259,7 @@ impl App {
         }
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
         if self.show_help {
@@ -233,7 +284,7 @@ impl App {
         self.draw_viewer(frame, viewer_area);
     }
 
-    fn draw_tree(&self, frame: &mut Frame, area: Rect) {
+    fn draw_tree(&mut self, frame: &mut Frame, area: Rect) {
         let flat = self.file_tree.flatten(0);
         let is_focused = self.focus == FocusedPane::Tree;
 
@@ -274,6 +325,9 @@ impl App {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Save area for mouse hit testing
+        self.tree_area = area;
+
         // Scroll tree to keep cursor visible
         let visible_height = area.height as usize;
         let tree_scroll = if self.tree_cursor >= visible_height {
@@ -281,6 +335,7 @@ impl App {
         } else {
             0
         };
+        self.tree_scroll = tree_scroll;
 
         let visible_items: Vec<ListItem> = items
             .into_iter()
@@ -478,7 +533,11 @@ fn main() -> io::Result<()> {
 
     // Set up terminal
     enable_raw_mode()?;
-    io::stdout().execute(EnterAlternateScreen)?;
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture,
+    )?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
     // Main loop
@@ -486,15 +545,23 @@ fn main() -> io::Result<()> {
         terminal.draw(|frame| app.draw(frame))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key);
+            match event::read()? {
+                Event::Key(key) => app.handle_key(key),
+                Event::Mouse(mouse) => {
+                    app.handle_mouse(mouse.kind, mouse.column, mouse.row);
+                }
+                _ => {}
             }
         }
     }
 
     // Restore terminal
+    execute!(
+        io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        LeaveAlternateScreen,
+    )?;
     disable_raw_mode()?;
-    io::stdout().execute(LeaveAlternateScreen)?;
 
     // Save config on exit
     let _ = app.config.save();
