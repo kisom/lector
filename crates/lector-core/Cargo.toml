@@ -8,6 +8,7 @@ directories = "6"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 ignore = "0.4"
 pulldown-cmark = "0.12"
+rusqlite = { version = "0.33", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 toml = "0.8"

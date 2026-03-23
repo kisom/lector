@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use iced::keyboard;
 use iced::widget::{
-    button, column, container, markdown, scrollable, text, Column, Row,
+    button, column, container, markdown, scrollable, text, text_input, Column, Row,
 };
 use iced::{color, Element, Font, Length, Subscription, Task, Theme};
 
 use lector_core::document::{Document, Format};
-use lector_core::nav::{self, Action, FocusedPane};
+use lector_core::nav::{self, Action, FocusedPane, KeyMapper};
 use lector_core::state::config::Config;
+use lector_core::state::position::PositionStore;
 use lector_core::tree::{fs as tree_fs, git, TreeNode};
 
 fn main() -> iced::Result {
@@ -23,6 +24,8 @@ fn main() -> iced::Result {
 
 struct App {
     config: Config,
+    positions: Option<PositionStore>,
+    key_mapper: KeyMapper,
 
     file_tree: TreeNode,
     tree_cursor: usize,
@@ -32,6 +35,9 @@ struct App {
     markdown_items: Vec<markdown::Item>,
 
     focus: FocusedPane,
+
+    /// When Some, shows a text input for changing directory.
+    dir_input: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,16 +46,49 @@ enum Message {
     TreeNodeClicked(PathBuf),
     TreeToggleDir(PathBuf),
     KeyEvent(keyboard::Event),
+    DirInputChanged(String),
+    DirInputSubmit,
 }
 
 impl App {
     fn new(path: Option<PathBuf>) -> (Self, Task<Message>) {
         let config = Config::load();
+        let positions = PositionStore::open().ok();
 
         // Canonicalize the input path so relative paths resolve correctly
         let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
 
-        // Determine root directory: use git root if available, else parent/cwd
+        let (file_tree, current_file, document, markdown_items) =
+            Self::init_from_path(&path, &positions);
+
+        let tree_cursor = if let Some(ref cf) = current_file {
+            find_cursor_for_path(&file_tree, cf).unwrap_or(0)
+        } else {
+            0
+        };
+
+        (
+            Self {
+                config,
+                positions,
+                key_mapper: KeyMapper::new(),
+                file_tree,
+                tree_cursor,
+                current_file,
+                document,
+                markdown_items,
+                focus: FocusedPane::Tree,
+                dir_input: None,
+            },
+            Task::none(),
+        )
+    }
+
+    /// Build the initial tree and optionally load a document from a path.
+    fn init_from_path(
+        path: &Option<PathBuf>,
+        _positions: &Option<PositionStore>,
+    ) -> (TreeNode, Option<PathBuf>, Option<Document>, Vec<markdown::Item>) {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let root = path
             .as_ref()
@@ -69,39 +108,20 @@ impl App {
 
         let mut file_tree = tree_fs::scan_directory(&root);
 
-        // Expand the path to the target file if one was given
         if let Some(ref p) = path {
             expand_to_path(&mut file_tree, p);
         }
 
-        // Load initial document if a file was specified
-        let (document, markdown_items, current_file) = match path.filter(|p| p.is_file()) {
+        let (document, markdown_items, current_file) = match path.as_ref().filter(|p| p.is_file())
+        {
             Some(p) => {
-                let (doc, items) = load_document(&p);
-                (Some(doc), items, Some(p))
+                let (doc, items) = load_document(p);
+                (Some(doc), items, Some(p.clone()))
             }
             None => (None, Vec::new(), None),
         };
 
-        // Find tree cursor for the current file
-        let tree_cursor = if let Some(ref cf) = current_file {
-            find_cursor_for_path(&file_tree, cf).unwrap_or(0)
-        } else {
-            0
-        };
-
-        (
-            Self {
-                config,
-                file_tree,
-                tree_cursor,
-                current_file,
-                document,
-                markdown_items,
-                focus: FocusedPane::Tree,
-            },
-            Task::none(),
-        )
+        (file_tree, current_file, document, markdown_items)
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -110,14 +130,20 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::LinkClicked(_url) => {
-                // TODO: open links externally
-            }
+            Message::LinkClicked(_url) => {}
             Message::TreeNodeClicked(path) => {
                 self.open_path(&path);
             }
             Message::TreeToggleDir(path) => {
                 self.file_tree.toggle_at_path(&path);
+            }
+            Message::DirInputChanged(value) => {
+                self.dir_input = Some(value);
+            }
+            Message::DirInputSubmit => {
+                if let Some(input) = self.dir_input.take() {
+                    self.change_directory(&input);
+                }
             }
             Message::KeyEvent(keyboard::Event::KeyPressed {
                 key,
@@ -125,13 +151,27 @@ impl App {
                 physical_key,
                 ..
             }) => {
+                // Escape cancels dir input or pending chord
+                if key.as_ref() == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                    if self.dir_input.is_some() {
+                        self.dir_input = None;
+                        return Task::none();
+                    }
+                    self.key_mapper.cancel();
+                    return Task::none();
+                }
+
+                // Don't process keybindings while dir input is active
+                if self.dir_input.is_some() {
+                    return Task::none();
+                }
+
                 let key_str = match key.as_ref() {
                     keyboard::Key::Character(c) => c.to_string(),
                     keyboard::Key::Named(named) => named_key_str(named).to_string(),
                     _ => return Task::none(),
                 };
 
-                // For emacs bindings, we want the latin character even on non-latin layouts
                 let latin = key.to_latin(physical_key);
                 let effective_key = latin.map(|c| c.to_string()).unwrap_or(key_str);
 
@@ -141,7 +181,7 @@ impl App {
                     shift: modifiers.shift(),
                 };
 
-                if let Some(action) = nav::map_key(&effective_key, mods, self.focus) {
+                if let Some(action) = self.key_mapper.process(&effective_key, mods, self.focus) {
                     return self.handle_action(action);
                 }
             }
@@ -159,9 +199,19 @@ impl App {
                 self.focus.toggle();
             }
             Action::CloseFile => {
+                self.save_position();
                 self.document = None;
                 self.markdown_items.clear();
                 self.current_file = None;
+            }
+            Action::ChangeDirectory => {
+                // Show directory input prompt
+                let default = self
+                    .file_tree
+                    .path
+                    .to_string_lossy()
+                    .into_owned();
+                self.dir_input = Some(default);
             }
             Action::FontSizeIncrease => {
                 self.config.font.increase_size();
@@ -173,6 +223,8 @@ impl App {
                 self.config.font.reset_size();
             }
             Action::Quit => {
+                self.save_position();
+                let _ = self.config.save();
                 return iced::exit();
             }
 
@@ -214,7 +266,6 @@ impl App {
                 }
             }
 
-            // Viewer scrolling handled by scrollable widget for now
             Action::ScrollDown
             | Action::ScrollUp
             | Action::PageDown
@@ -227,16 +278,42 @@ impl App {
 
     fn open_path(&mut self, path: &std::path::Path) {
         if path.is_file() {
+            // Save position of current file before switching
+            self.save_position();
+
             let (doc, items) = load_document(path);
             self.document = Some(doc);
             self.markdown_items = items;
             self.current_file = Some(path.to_path_buf());
             self.focus = FocusedPane::Viewer;
 
-            // Update tree cursor
             if let Some(idx) = find_cursor_for_path(&self.file_tree, path) {
                 self.tree_cursor = idx;
             }
+        }
+    }
+
+    fn save_position(&self) {
+        if let (Some(positions), Some(file)) = (&self.positions, &self.current_file) {
+            // Save current scroll offset (0.0 as placeholder — iced scrollable
+            // doesn't expose offset directly; will be wired up when we add
+            // programmatic scroll control)
+            let _ = positions.save(file, 0.0);
+        }
+    }
+
+    fn change_directory(&mut self, input: &str) {
+        let path = PathBuf::from(shellexpand::tilde(input).as_ref());
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+
+        if path.is_dir() {
+            self.save_position();
+            self.file_tree = tree_fs::scan_directory(&path);
+            self.tree_cursor = 0;
+            self.document = None;
+            self.markdown_items.clear();
+            self.current_file = None;
+            self.focus = FocusedPane::Tree;
         }
     }
 
@@ -252,10 +329,37 @@ impl App {
             Row::new().push(viewer_pane).push(tree_pane)
         };
 
-        container(layout.width(Length::Fill).height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        let mut content = Column::new().push(
+            container(layout.width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        );
+
+        // Directory input bar at the bottom
+        if let Some(ref input) = self.dir_input {
+            let chord_indicator = if self.key_mapper.has_pending() { "C-x " } else { "" };
+            let input_bar = container(
+                Row::new()
+                    .push(text(format!("{chord_indicator}Open directory: ")).size(14))
+                    .push(
+                        text_input("path...", input)
+                            .on_input(Message::DirInputChanged)
+                            .on_submit(Message::DirInputSubmit)
+                            .size(14)
+                            .width(Length::Fill),
+                    )
+                    .spacing(4)
+                    .padding(4),
+            )
+            .style(|_theme| container::Style {
+                background: Some(color!(0x2e3440).into()),
+                ..Default::default()
+            })
+            .width(Length::Fill);
+            content = content.push(input_bar);
+        }
+
+        content.width(Length::Fill).height(Length::Fill).into()
     }
 
     fn view_tree(&self) -> Element<'_, Message> {
@@ -289,9 +393,9 @@ impl App {
                     .size(tree_font_size);
 
                 let bg_color = if is_selected && is_focused {
-                    Some(color!(0x3b4252)) // Nord selection
+                    Some(color!(0x3b4252))
                 } else if is_current {
-                    Some(color!(0x2e3440)) // Nord subtle highlight
+                    Some(color!(0x2e3440))
                 } else {
                     None
                 };
@@ -368,10 +472,8 @@ impl App {
                 .center(Length::Fill)
                 .into()
             } else {
-                let settings = markdown::Settings::with_text_size(
-                    font_size,
-                    Theme::Dark.palette(),
-                );
+                let settings =
+                    markdown::Settings::with_text_size(font_size, Theme::Dark.palette());
                 let md_view: Element<markdown::Uri> =
                     markdown::view(&self.markdown_items, settings);
 
@@ -401,7 +503,10 @@ fn load_document(path: &std::path::Path) -> (Document, Vec<markdown::Item>) {
         Ok(doc) => {
             let items = match doc.format {
                 Format::Markdown => markdown::parse(&doc.source).collect(),
-                _ => markdown::parse(&format!("```\n{}\n```", doc.source)).collect(),
+                _ => {
+                    // Graceful fallback: render non-markdown files as code blocks
+                    markdown::parse(&format!("```\n{}\n```", doc.source)).collect()
+                }
             };
             (doc, items)
         }
@@ -416,7 +521,6 @@ fn load_document(path: &std::path::Path) -> (Document, Vec<markdown::Item>) {
     }
 }
 
-/// Expand all directories along the path to a target file.
 fn expand_to_path(tree: &mut TreeNode, target: &std::path::Path) {
     if target.starts_with(&tree.path) {
         tree.set_expanded(true);
@@ -430,14 +534,12 @@ fn expand_to_path(tree: &mut TreeNode, target: &std::path::Path) {
     }
 }
 
-/// Find the flat index of a path in the tree.
 fn find_cursor_for_path(tree: &TreeNode, target: &std::path::Path) -> Option<usize> {
     tree.flatten(0)
         .iter()
         .position(|entry| entry.node.path == target)
 }
 
-/// Convert iced Named keys to string identifiers.
 fn named_key_str(named: keyboard::key::Named) -> &'static str {
     match named {
         keyboard::key::Named::Tab => "tab",

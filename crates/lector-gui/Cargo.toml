@@ -8,5 +8,6 @@ name = "lector"
 path = "src/main.rs"
 
 [dependencies]
-lector-core = { path = "../lector-core" }
 iced = { version = "0.14", features = ["markdown", "highlighter"] }
+lector-core = { path = "../lector-core" }
+shellexpand = "3"

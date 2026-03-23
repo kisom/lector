@@ -21,6 +21,7 @@ pub enum Action {
 
     // File
     CloseFile,
+    ChangeDirectory,
 
     // Font
     FontSizeIncrease,
@@ -55,8 +56,56 @@ pub struct Modifiers {
     pub shift: bool,
 }
 
-/// Translate a key press into a navigation action.
-/// Key names follow iced's naming convention (lowercase).
+/// Stateful key mapper that supports chord sequences (e.g. C-x C-f).
+#[derive(Debug, Default)]
+pub struct KeyMapper {
+    /// Pending prefix key for chord sequences (e.g. "x" after C-x).
+    pending_prefix: Option<String>,
+}
+
+impl KeyMapper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Process a key press. Returns an action if the key (or chord) matches.
+    /// Call this for each key press event.
+    pub fn process(&mut self, key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action> {
+        // Check if we're completing a chord
+        if let Some(prefix) = self.pending_prefix.take() {
+            return self.map_chord(&prefix, key, mods);
+        }
+
+        // Check if this starts a chord (C-x)
+        if mods.ctrl && !mods.alt && key == "x" {
+            self.pending_prefix = Some("x".to_string());
+            return None;
+        }
+
+        // Single-key binding
+        map_key(key, mods, focus)
+    }
+
+    /// Returns true if waiting for the second key of a chord.
+    pub fn has_pending(&self) -> bool {
+        self.pending_prefix.is_some()
+    }
+
+    /// Cancel any pending chord.
+    pub fn cancel(&mut self) {
+        self.pending_prefix = None;
+    }
+
+    fn map_chord(&mut self, prefix: &str, key: &str, mods: Modifiers) -> Option<Action> {
+        match (prefix, mods.ctrl, key) {
+            // C-x C-f → change directory
+            ("x", true, "f") => Some(Action::ChangeDirectory),
+            _ => None,
+        }
+    }
+}
+
+/// Translate a single key press into a navigation action.
 pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action> {
     match (mods.ctrl, mods.alt, key) {
         // Emacs-style bindings
@@ -72,7 +121,7 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
         (false, true, "v") => Some(Action::PageUp),
         (true, false, "f") => Some(match focus {
             FocusedPane::Tree => Action::TreeExpand,
-            FocusedPane::Viewer => Action::ScrollDown, // forward char → scroll in viewer
+            FocusedPane::Viewer => Action::ScrollDown,
         }),
         (true, false, "b") => Some(match focus {
             FocusedPane::Tree => Action::TreeCollapse,
@@ -166,6 +215,34 @@ mod tests {
             map_key("w", ctrl(), FocusedPane::Viewer),
             Some(Action::CloseFile)
         );
+    }
+
+    #[test]
+    fn chord_cx_cf_changes_directory() {
+        let mut mapper = KeyMapper::new();
+        let focus = FocusedPane::Viewer;
+
+        // C-x should start a chord, returning None
+        assert_eq!(mapper.process("x", ctrl(), focus), None);
+        assert!(mapper.has_pending());
+
+        // C-f should complete the chord
+        assert_eq!(
+            mapper.process("f", ctrl(), focus),
+            Some(Action::ChangeDirectory)
+        );
+        assert!(!mapper.has_pending());
+    }
+
+    #[test]
+    fn chord_cancelled_by_wrong_key() {
+        let mut mapper = KeyMapper::new();
+        let focus = FocusedPane::Viewer;
+
+        assert_eq!(mapper.process("x", ctrl(), focus), None);
+        // Wrong second key
+        assert_eq!(mapper.process("z", ctrl(), focus), None);
+        assert!(!mapper.has_pending());
     }
 
     #[test]

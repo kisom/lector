@@ -52,8 +52,15 @@ crates/
 
 - `document/` — Document loading, format detection, markdown parsing (pulldown-cmark with GFM)
 - `tree/` — File tree model with gitignore-aware scanning (`ignore` crate) and git root detection (`git2`)
-- `nav/` — Navigation action enum and emacs keybinding mapper
+- `nav/` — Navigation actions, emacs keybinding mapper, chord support (C-x C-f)
+- `state/config.rs` — TOML config at `$XDG_CONFIG_HOME/lector/config.toml`
+- `state/position.rs` — SQLite position store at `$XDG_DATA_HOME/lector/positions.db`
 
 ### Adding a new document format
 
 Implement parsing in `document/<format>.rs`, add the variant to `Format` enum in `document/mod.rs`. The GUI viewer falls back to rendering unknown formats as code blocks.
+
+### Data files (XDG)
+
+- Config: `$XDG_CONFIG_HOME/lector/config.toml` (default `~/.config/lector/config.toml`)
+- Positions DB: `$XDG_DATA_HOME/lector/positions.db` (default `~/.local/share/lector/positions.db`)
