@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use iced::keyboard;
 use iced::widget::{
-    button, column, container, markdown, scrollable, text, text_input, Column, Row,
+    button, column, container, markdown, scrollable, stack, text, text_input, Column, Row,
 };
 use iced::{color, Element, Font, Length, Subscription, Task, Theme};
 
@@ -38,6 +38,7 @@ struct App {
 
     /// When Some, shows a text input for changing directory.
     dir_input: Option<String>,
+    show_help: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +80,7 @@ impl App {
                 markdown_items,
                 focus: FocusedPane::Tree,
                 dir_input: None,
+                show_help: false,
             },
             Task::none(),
         )
@@ -151,8 +153,12 @@ impl App {
                 physical_key,
                 ..
             }) => {
-                // Escape cancels dir input or pending chord
+                // Escape dismisses overlays and cancels pending chords
                 if key.as_ref() == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                    if self.show_help {
+                        self.show_help = false;
+                        return Task::none();
+                    }
                     if self.dir_input.is_some() {
                         self.dir_input = None;
                         return Task::none();
@@ -161,8 +167,17 @@ impl App {
                     return Task::none();
                 }
 
-                // Don't process keybindings while dir input is active
+                // Don't process other keybindings while dir input or help is active
                 if self.dir_input.is_some() {
+                    return Task::none();
+                }
+                if self.show_help {
+                    // Allow C-h to toggle help off
+                    if modifiers.control()
+                        && key.to_latin(physical_key) == Some('h')
+                    {
+                        self.show_help = false;
+                    }
                     return Task::none();
                 }
 
@@ -221,6 +236,9 @@ impl App {
             }
             Action::FontSizeReset => {
                 self.config.font.reset_size();
+            }
+            Action::ShowHelp => {
+                self.show_help = !self.show_help;
             }
             Action::Quit => {
                 self.save_position();
@@ -359,7 +377,89 @@ impl App {
             content = content.push(input_bar);
         }
 
-        content.width(Length::Fill).height(Length::Fill).into()
+        let base: Element<Message> = content.width(Length::Fill).height(Length::Fill).into();
+
+        if self.show_help {
+            stack![base, self.view_help()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            base
+        }
+    }
+
+    fn view_help(&self) -> Element<'_, Message> {
+        let bindings = [
+            ("C-n / C-p", "Scroll down / up (viewer) or next / prev (tree)"),
+            ("C-v / M-v", "Page down / up"),
+            ("C-f / C-b", "Expand / collapse (tree) or scroll (viewer)"),
+            ("M-< / M->", "Beginning / end of document"),
+            ("Tab", "Toggle focus between tree and viewer"),
+            ("Enter", "Open file / toggle directory (tree)"),
+            ("C-w", "Close current file"),
+            ("C-x C-f", "Change working directory"),
+            ("C-= / C-+", "Increase font size"),
+            ("C--", "Decrease font size"),
+            ("C-0", "Reset font size"),
+            ("C-h", "Toggle this help"),
+            ("q / C-x C-c", "Quit"),
+            ("Escape", "Dismiss dialog / cancel"),
+        ];
+
+        let mut help_col = Column::new()
+            .push(text("Keyboard Shortcuts").size(20))
+            .push(text("").size(8))
+            .spacing(4)
+            .padding(24)
+            .width(Length::Shrink);
+
+        for (key, desc) in bindings {
+            help_col = help_col.push(
+                Row::new()
+                    .push(
+                        container(
+                            text(key).font(Font::MONOSPACE).size(14).color(color!(0x88c0d0)),
+                        )
+                        .width(Length::Fixed(160.0)),
+                    )
+                    .push(text(desc).size(14).color(color!(0xd8dee9)))
+                    .spacing(12),
+            );
+        }
+
+        help_col = help_col
+            .push(text("").size(8))
+            .push(text("Press Escape or C-h to close").size(12).color(color!(0x616e88)));
+
+        // Centered overlay with semi-transparent backdrop
+        let dialog = container(
+            container(help_col)
+                .style(|_theme| container::Style {
+                    background: Some(color!(0x2e3440).into()),
+                    border: iced::Border {
+                        color: color!(0x4c566a),
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding(8),
+        )
+        .center(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(iced::Background::Color(iced::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.6,
+            })),
+            ..Default::default()
+        });
+
+        dialog.into()
     }
 
     fn view_tree(&self) -> Element<'_, Message> {

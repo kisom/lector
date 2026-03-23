@@ -29,6 +29,7 @@ pub enum Action {
     FontSizeReset,
 
     // Application
+    ShowHelp,
     Quit,
 }
 
@@ -100,6 +101,8 @@ impl KeyMapper {
         match (prefix, mods.ctrl, key) {
             // C-x C-f → change directory
             ("x", true, "f") => Some(Action::ChangeDirectory),
+            // C-x C-c → quit
+            ("x", true, "c") => Some(Action::Quit),
             _ => None,
         }
     }
@@ -134,6 +137,9 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
 
         // C-w to close current file
         (true, false, "w") => Some(Action::CloseFile),
+
+        // C-h to show help
+        (true, false, "h") => Some(Action::ShowHelp),
 
         // C-= / C-+ to increase font size, C-- to decrease, C-0 to reset
         (true, false, "=" | "+") => Some(Action::FontSizeIncrease),
@@ -232,6 +238,18 @@ mod tests {
             Some(Action::ChangeDirectory)
         );
         assert!(!mapper.has_pending());
+    }
+
+    #[test]
+    fn chord_cx_cc_quits() {
+        let mut mapper = KeyMapper::new();
+        let focus = FocusedPane::Viewer;
+
+        assert_eq!(mapper.process("x", ctrl(), focus), None);
+        assert_eq!(
+            mapper.process("c", ctrl(), focus),
+            Some(Action::Quit)
+        );
     }
 
     #[test]
