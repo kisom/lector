@@ -141,17 +141,35 @@ fn render_to_html(doc: &Document) -> String {
             opts.extension.strikethrough = true;
             opts.extension.tasklist = true;
             opts.extension.footnotes = true;
-            opts.render.unsafe_ = true; // allow raw HTML in markdown
+            opts.render.unsafe_ = true;
             markdown_to_html(&doc.source, &opts)
         }
-        _ => {
-            // Fallback: wrap in <pre> for non-markdown
-            format!(
-                "<pre><code>{}</code></pre>",
-                html_escape(&doc.source)
-            )
+        Format::OrgMode => {
+            let org = orgize::Org::parse(&doc.source);
+            let mut buf = Vec::new();
+            match org.write_html(&mut buf) {
+                Ok(()) => String::from_utf8(buf).unwrap_or_else(|_| html_pre(&doc.source)),
+                Err(_) => html_pre(&doc.source),
+            }
         }
+        Format::ReStructuredText => match rst_parser::parse(&doc.source) {
+            Ok(document) => {
+                let mut buf = Vec::new();
+                match rst_renderer::render_html(&document, &mut buf, false) {
+                    Ok(()) => {
+                        String::from_utf8(buf).unwrap_or_else(|_| html_pre(&doc.source))
+                    }
+                    Err(_) => html_pre(&doc.source),
+                }
+            }
+            Err(_) => html_pre(&doc.source),
+        },
+        Format::Plain => html_pre(&doc.source),
     }
+}
+
+fn html_pre(source: &str) -> String {
+    format!("<pre><code>{}</code></pre>", html_escape(source))
 }
 
 fn html_escape(s: &str) -> String {

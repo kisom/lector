@@ -6,8 +6,8 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Markdown,
-    // ReStructuredText, // future
-    // OrgMode,          // future
+    ReStructuredText,
+    OrgMode,
     Plain,
 }
 
@@ -16,8 +16,8 @@ impl Format {
     pub fn from_path(path: &Path) -> Self {
         match path.extension().and_then(|e| e.to_str()) {
             Some("md" | "markdown" | "mkd" | "mdx") => Self::Markdown,
-            // Some("rst" | "rest") => Self::ReStructuredText,
-            // Some("org") => Self::OrgMode,
+            Some("rst" | "rest") => Self::ReStructuredText,
+            Some("org") => Self::OrgMode,
             _ => Self::Plain,
         }
     }

@@ -16,6 +16,8 @@ pub struct UiConfig {
     /// "left" or "right"
     pub tree_position: String,
     pub tree_width_ratio: f32,
+    /// Theme name: "nord", "eink", or "tufte"
+    pub theme: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,7 @@ impl Default for UiConfig {
         Self {
             tree_position: "left".to_string(),
             tree_width_ratio: 0.25,
+            theme: "nord".to_string(),
         }
     }
 }
