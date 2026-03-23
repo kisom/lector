@@ -77,17 +77,36 @@ async function toggleDir(path) {
   await loadTree();
 }
 
+async function saveCurrentPosition() {
+  if (currentFile) {
+    const offset = document.getElementById('viewer-content').scrollTop;
+    await invoke('save_position', { path: currentFile, offset });
+  }
+}
+
 async function openFile(path) {
+  // Save position of previous file
+  await saveCurrentPosition();
+
   const response = await invoke('open_file', { path });
   currentFile = path;
   document.getElementById('viewer-header').textContent = response.filename;
   document.getElementById('viewer-content').innerHTML = response.html;
-  document.getElementById('viewer-content').scrollTop = 0;
+
+  // Restore saved scroll position
+  const saved = await invoke('load_position', { path });
+  if (saved != null) {
+    document.getElementById('viewer-content').scrollTop = saved;
+  } else {
+    document.getElementById('viewer-content').scrollTop = 0;
+  }
+
   focusedPane = 'viewer';
-  await loadTree(); // refresh to update current-file highlight
+  await loadTree();
 }
 
 function closeFile() {
+  saveCurrentPosition();
   currentFile = null;
   document.getElementById('viewer-header').textContent = '';
   document.getElementById('viewer-content').innerHTML =
@@ -151,6 +170,12 @@ function toggleTreePane() {
   document.getElementById('tree-pane').classList.toggle('hidden', !showTree);
 }
 
+// Cycle theme
+async function cycleTheme() {
+  const newTheme = await invoke('cycle_theme');
+  document.body.className = 'theme-' + newTheme;
+}
+
 // Scrolling
 function scrollViewer(lines) {
   const el = document.getElementById('viewer-content');
@@ -192,7 +217,7 @@ document.addEventListener('keydown', (e) => {
   if (pendingPrefix === 'x') {
     pendingPrefix = null;
     if (e.ctrlKey && e.key === 'f') { showDirInput(); e.preventDefault(); return; }
-    if (e.ctrlKey && e.key === 'c') { invoke('quit'); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 'c') { saveCurrentPosition().then(() => invoke('quit')); e.preventDefault(); return; }
     e.preventDefault();
     return;
   }
@@ -251,6 +276,9 @@ document.addEventListener('keydown', (e) => {
       case 'v':
         pageViewer(-1);
         e.preventDefault(); return;
+      case 't':
+        cycleTheme();
+        e.preventDefault(); return;
       case '<':
       case ',':
         document.getElementById('viewer-content').scrollTop = 0;
@@ -278,7 +306,7 @@ document.addEventListener('keydown', (e) => {
         }
         e.preventDefault(); return;
       case 'q':
-        invoke('quit');
+        saveCurrentPosition().then(() => invoke('quit'));
         e.preventDefault(); return;
     }
   }

@@ -29,6 +29,9 @@ pub enum Action {
     FontSizeDecrease,
     FontSizeReset,
 
+    // Appearance
+    CycleTheme,
+
     // Application
     ShowHelp,
     Quit,
@@ -144,6 +147,9 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
 
         // C-t to toggle tree pane
         (true, false, "t") => Some(Action::ToggleTree),
+
+        // M-t to cycle theme
+        (false, true, "t") => Some(Action::CycleTheme),
 
         // C-= / C-+ to increase font size, C-- to decrease, C-0 to reset
         (true, false, "=" | "+") => Some(Action::FontSizeIncrease),

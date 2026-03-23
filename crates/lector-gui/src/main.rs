@@ -122,12 +122,34 @@ fn get_config(state: tauri::State<'_, Mutex<AppState>>) -> Config {
 }
 
 #[tauri::command]
+fn cycle_theme(state: tauri::State<'_, Mutex<AppState>>) -> String {
+    let mut state = state.lock().unwrap();
+    state.config.ui.cycle_theme();
+    state.config.ui.theme.clone()
+}
+
+#[tauri::command]
+fn save_position(path: String, offset: f64, state: tauri::State<'_, Mutex<AppState>>) {
+    let state = state.lock().unwrap();
+    if let Some(positions) = &state.positions {
+        let _ = positions.save(std::path::Path::new(&path), offset as f32);
+    }
+}
+
+#[tauri::command]
+fn load_position(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<f64> {
+    let state = state.lock().unwrap();
+    state
+        .positions
+        .as_ref()
+        .and_then(|p| p.load(std::path::Path::new(&path)).ok().flatten())
+        .map(|v| v as f64)
+}
+
+#[tauri::command]
 fn quit(app: tauri::AppHandle, state: tauri::State<'_, Mutex<AppState>>) {
     let state = state.lock().unwrap();
     let _ = state.config.save();
-    if let (Some(positions), Some(file)) = (&state.positions, &state.current_file) {
-        let _ = positions.save(file, 0.0);
-    }
     app.exit(0);
 }
 
@@ -229,6 +251,9 @@ fn main() {
             open_file,
             change_directory,
             get_config,
+            cycle_theme,
+            save_position,
+            load_position,
             quit,
         ])
         .run(tauri::generate_context!())

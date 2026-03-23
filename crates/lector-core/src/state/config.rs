@@ -38,6 +38,8 @@ pub struct FontConfig {
 }
 
 
+const THEMES: &[&str] = &["nord", "eink", "tufte"];
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -45,6 +47,14 @@ impl Default for UiConfig {
             tree_width_ratio: 0.25,
             theme: "nord".to_string(),
         }
+    }
+}
+
+impl UiConfig {
+    /// Cycle to the next theme.
+    pub fn cycle_theme(&mut self) {
+        let idx = THEMES.iter().position(|t| *t == self.theme).unwrap_or(0);
+        self.theme = THEMES[(idx + 1) % THEMES.len()].to_string();
     }
 }
 

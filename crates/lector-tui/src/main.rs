@@ -183,6 +183,10 @@ impl App {
                 self.scroll_offset = 0;
             }
             Action::ShowHelp => self.show_help = !self.show_help,
+            Action::CycleTheme => {
+                // TUI doesn't support CSS themes, but persist the preference
+                self.config.ui.cycle_theme();
+            }
             Action::ToggleTree => {
                 self.show_tree = !self.show_tree;
                 if self.show_tree {
@@ -425,6 +429,7 @@ impl App {
             ("Enter", "Open / toggle (tree)"),
             ("C-w", "Close file"),
             ("C-t", "Toggle tree pane"),
+            ("M-t", "Cycle theme"),
             ("C-h", "Toggle help"),
             ("q / C-x C-c", "Quit"),
             ("Escape", "Dismiss / cancel"),
