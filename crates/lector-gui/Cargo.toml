@@ -3,6 +3,10 @@ name = "lector-gui"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "lector"
+path = "src/main.rs"
+
 [dependencies]
 lector-core = { path = "../lector-core" }
 iced = { version = "0.14", features = ["markdown", "highlighter"] }

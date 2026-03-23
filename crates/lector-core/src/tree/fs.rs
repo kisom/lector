@@ -1,0 +1,118 @@
+use std::path::Path;
+
+use ignore::WalkBuilder;
+
+use super::TreeNode;
+
+/// Scan a directory tree, respecting .gitignore rules.
+/// Returns the root TreeNode representing the directory.
+pub fn scan_directory(root: &Path) -> TreeNode {
+    let mut root_node = TreeNode::directory(
+        root.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned()),
+        root.to_path_buf(),
+        Vec::new(),
+    );
+    root_node.set_expanded(true);
+
+    populate_children(&mut root_node, root);
+    root_node
+}
+
+fn populate_children(node: &mut TreeNode, dir: &Path) {
+    let Some(children) = node.children_mut() else { return };
+
+    let mut dirs: Vec<TreeNode> = Vec::new();
+    let mut files: Vec<TreeNode> = Vec::new();
+
+    // Use ignore crate's WalkBuilder for gitignore-aware traversal.
+    // max_depth(1) gives us only immediate children.
+    let walker = WalkBuilder::new(dir)
+        .max_depth(Some(1))
+        .hidden(true) // skip hidden files
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .build();
+
+    for entry in walker.flatten() {
+        let path = entry.path();
+
+        // Skip the root directory itself
+        if path == dir {
+            continue;
+        }
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        if path.is_dir() {
+            let mut dir_node = TreeNode::directory(name, path.to_path_buf(), Vec::new());
+            // Eagerly populate one level deep so we know if dirs have children
+            populate_children(&mut dir_node, path);
+            dirs.push(dir_node);
+        } else {
+            files.push(TreeNode::file(name, path.to_path_buf()));
+        }
+    }
+
+    // Directories first, then files (both sorted alphabetically by the walker)
+    dirs.append(&mut files);
+    *children = dirs;
+}
+
+/// Check if a path is a document file we can render.
+pub fn is_document(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("md" | "markdown" | "mkd" | "mdx" | "rst" | "rest" | "org" | "txt")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn scan_creates_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        fs::write(root.join("readme.md"), "# Hello").unwrap();
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::write(root.join("docs/guide.md"), "Guide").unwrap();
+
+        let tree = scan_directory(root);
+        assert!(tree.is_dir());
+        assert!(tree.is_expanded());
+
+        let children = tree.children().unwrap();
+        assert_eq!(children.len(), 2); // docs/ and readme.md
+
+        // Directories come first
+        assert!(children[0].is_dir());
+        assert_eq!(children[0].name, "docs");
+        assert_eq!(children[1].name, "readme.md");
+    }
+
+    #[test]
+    fn respects_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Initialize a git repo so .gitignore is respected
+        git2::Repository::init(root).unwrap();
+        fs::write(root.join(".gitignore"), "ignored.md\n").unwrap();
+        fs::write(root.join("visible.md"), "Hello").unwrap();
+        fs::write(root.join("ignored.md"), "Secret").unwrap();
+
+        let tree = scan_directory(root);
+        let children = tree.children().unwrap();
+
+        let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"visible.md"));
+        assert!(!names.contains(&"ignored.md"));
+    }
+}
