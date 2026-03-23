@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lector</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-nord">
+  <div id="app">
+    <div id="tree-pane"></div>
+    <div id="viewer-pane">
+      <div id="viewer-header"></div>
+      <div id="viewer-content">
+        <p class="placeholder">Open a file from the tree to start reading.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-overlay" class="hidden">
+    <div id="help-dialog">
+      <h2>Keyboard Shortcuts</h2>
+      <table>
+        <tr><td class="key">C-n / C-p</td><td>Scroll down / up (viewer) or next / prev (tree)</td></tr>
+        <tr><td class="key">C-v / M-v</td><td>Page down / up</td></tr>
+        <tr><td class="key">C-f / C-b</td><td>Expand / collapse (tree)</td></tr>
+        <tr><td class="key">M-&lt; / M-&gt;</td><td>Beginning / end of document</td></tr>
+        <tr><td class="key">Tab</td><td>Toggle focus between tree and viewer</td></tr>
+        <tr><td class="key">Enter</td><td>Open file / toggle directory (tree)</td></tr>
+        <tr><td class="key">C-w</td><td>Close current file</td></tr>
+        <tr><td class="key">C-x C-f</td><td>Change working directory</td></tr>
+        <tr><td class="key">C-t</td><td>Toggle tree pane</td></tr>
+        <tr><td class="key">C-= / C--</td><td>Increase / decrease font size</td></tr>
+        <tr><td class="key">C-0</td><td>Reset font size</td></tr>
+        <tr><td class="key">C-h</td><td>Toggle this help</td></tr>
+        <tr><td class="key">q / C-x C-c</td><td>Quit</td></tr>
+        <tr><td class="key">Escape</td><td>Dismiss dialog / cancel</td></tr>
+      </table>
+      <p class="hint">Press Escape or C-h to close</p>
+    </div>
+  </div>
+
+  <div id="dir-input-bar" class="hidden">
+    <span>Open directory: </span>
+    <input type="text" id="dir-input" placeholder="path...">
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

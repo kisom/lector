@@ -1,0 +1,21 @@
+{
+  "productName": "Lector",
+  "version": "0.1.0",
+  "identifier": "dev.lector.app",
+  "build": {
+    "frontendDist": "./frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Lector",
+        "width": 1200,
+        "height": 800,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

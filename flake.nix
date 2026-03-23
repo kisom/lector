@@ -12,27 +12,20 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         runtimeDeps = with pkgs; [
-          # GPU / rendering (wgpu backend)
-          vulkan-loader
-          libxkbcommon
-
-          # Wayland
-          wayland
-          wayland-protocols
-
-          # X11 fallback
-          libx11
-          libxcursor
-          libxi
-          libxrandr
-          libxcb
+          # Tauri / WebKitGTK (GUI)
+          webkitgtk_4_1
+          gtk3
+          cairo
+          gdk-pixbuf
+          glib
+          dbus
+          openssl
+          librsvg
+          libsoup_3
 
           # Fonts
           fontconfig
           freetype
-
-          # System
-          udev
         ];
 
         libPath = pkgs.lib.makeLibraryPath runtimeDeps;

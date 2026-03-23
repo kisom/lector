@@ -10,15 +10,15 @@ Target platforms: NixOS and macOS. See DESIGN.md for detailed rationale on techn
 
 ## Technology Decisions
 
-- **Language:** Rust
-- **GUI:** iced 0.14 (with `markdown` and `highlighter` features) — native rendering, no webview
-- **TUI:** ratatui + crossterm (planned, not yet implemented)
-- **Webview/HTML/CSS technologies are intentionally avoided**
+- **Language:** Rust (backend) + plain HTML/CSS/JS (GUI frontend)
+- **GUI:** Tauri 2 (system webview: WebKitGTK on Linux, WKWebView on macOS). Documents rendered to HTML on the Rust side via `comrak` (markdown). Themes via CSS.
+- **TUI:** ratatui + crossterm → `clector` binary
+- **Document rendering:** All formats convert to HTML for the GUI, styled terminal text for the TUI
 
 ## Binaries
 
-- `lector` — GUI application (from `crates/lector-gui`)
-- `clector` — TUI application (from `crates/lector-tui`, not yet created)
+- `lector` — GUI application (Tauri, from `crates/lector-gui`)
+- `clector` — TUI application (ratatui, from `crates/lector-tui`)
 
 ## Build Commands
 
@@ -29,8 +29,8 @@ nix develop                                       # Enter dev shell
 nix develop --command cargo build                  # Build all crates
 nix develop --command cargo test --workspace       # Run all tests
 nix develop --command cargo clippy --workspace     # Lint
-nix develop --command cargo run -p lector-gui -- <file.md>  # Run GUI
-nix develop --command cargo run -p lector-tui -- <file.md>  # Run TUI
+nix develop --command cargo run -p lector-gui -- <file>   # Run GUI
+nix develop --command cargo run -p lector-tui -- <file>   # Run TUI
 ```
 
 To run a single test:
@@ -45,21 +45,35 @@ Cargo workspace with three crates:
 ```
 crates/
   lector-core/    # Shared library — no GUI/TUI dependencies
-  lector-gui/     # iced GUI → "lector" binary
-  lector-tui/     # ratatui TUI → "clector" binary (not yet created)
+  lector-gui/     # Tauri 2 backend + HTML/CSS/JS frontend → "lector" binary
+  lector-tui/     # ratatui terminal UI → "clector" binary
+```
+
+### lector-gui structure
+
+```
+crates/lector-gui/
+  src/main.rs          # Tauri entry point + IPC commands (Rust)
+  frontend/            # Plain HTML/CSS/JS served by Tauri webview
+    index.html
+    main.js            # Keybindings, tree rendering, IPC calls
+    style.css          # Layout + themes (Nord, eink, Tufte)
+  tauri.conf.json      # Tauri window/build configuration
 ```
 
 ### Key modules in lector-core
 
-- `document/` — Document loading, format detection, markdown parsing (pulldown-cmark with GFM)
+- `document/` — Document loading, format detection
 - `tree/` — File tree model with gitignore-aware scanning (`ignore` crate) and git root detection (`git2`)
-- `nav/` — Navigation actions, emacs keybinding mapper, chord support (C-x C-f)
+- `nav/` — Navigation actions, emacs keybinding mapper, chord support (C-x C-f, C-x C-c)
 - `state/config.rs` — TOML config at `$XDG_CONFIG_HOME/lector/config.toml`
 - `state/position.rs` — SQLite position store at `$XDG_DATA_HOME/lector/positions.db`
 
 ### Adding a new document format
 
-Implement parsing in `document/<format>.rs`, add the variant to `Format` enum in `document/mod.rs`. The GUI viewer falls back to rendering unknown formats as code blocks.
+1. Add a rendering function in `lector-gui/src/main.rs` `render_to_html()` for the GUI
+2. Add a rendering path in `lector-tui/src/render.rs` for the TUI
+3. Add the format variant to `Format` enum in `document/mod.rs`
 
 ### Data files (XDG)
 

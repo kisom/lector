@@ -8,6 +8,12 @@ name = "lector"
 path = "src/main.rs"
 
 [dependencies]
-iced = { version = "0.14", features = ["markdown", "highlighter"] }
+comrak = "0.37"
 lector-core = { path = "../lector-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 shellexpand = "3"
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-build = "2"
