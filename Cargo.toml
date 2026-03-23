@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/lector-core", "crates/lector-gui"]
+members = ["crates/lector-core", "crates/lector-gui", "crates/lector-tui"]
 resolver = "2"
 
 [workspace.package]

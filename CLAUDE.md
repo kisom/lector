@@ -30,6 +30,7 @@ nix develop --command cargo build                  # Build all crates
 nix develop --command cargo test --workspace       # Run all tests
 nix develop --command cargo clippy --workspace     # Lint
 nix develop --command cargo run -p lector-gui -- <file.md>  # Run GUI
+nix develop --command cargo run -p lector-tui -- <file.md>  # Run TUI
 ```
 
 To run a single test:

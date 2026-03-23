@@ -1,0 +1,14 @@
+[package]
+name = "lector-tui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "clector"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.28"
+lector-core = { path = "../lector-core" }
+pulldown-cmark = "0.12"
+ratatui = "0.29"
