@@ -2,23 +2,17 @@ use std::path::PathBuf;
 
 use iced::keyboard;
 use iced::widget::{
-    button, column, container, markdown, pane_grid, scrollable, text,
-    Column,
+    button, column, container, markdown, scrollable, text, Column, Row,
 };
 use iced::{color, Element, Font, Length, Subscription, Task, Theme};
 
 use lector_core::document::{Document, Format};
 use lector_core::nav::{self, Action, FocusedPane};
+use lector_core::state::config::Config;
 use lector_core::tree::{fs as tree_fs, git, TreeNode};
 
 fn main() -> iced::Result {
-    let path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            eprintln!("Usage: lector <file.md>");
-            std::process::exit(1);
-        });
+    let path = std::env::args().nth(1).map(PathBuf::from);
 
     iced::application(move || App::new(path.clone()), App::update, App::view)
         .title("Lector")
@@ -28,10 +22,7 @@ fn main() -> iced::Result {
 }
 
 struct App {
-    panes: pane_grid::State<PaneKind>,
-    _tree_pane: pane_grid::Pane,
-    _viewer_pane: pane_grid::Pane,
-    _tree_on_left: bool,
+    config: Config,
 
     file_tree: TreeNode,
     tree_cursor: usize,
@@ -43,15 +34,8 @@ struct App {
     focus: FocusedPane,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum PaneKind {
-    Tree,
-    Viewer,
-}
-
 #[derive(Debug, Clone)]
 enum Message {
-    PaneResized(pane_grid::ResizeEvent),
     LinkClicked(markdown::Uri),
     TreeNodeClicked(PathBuf),
     TreeToggleDir(PathBuf),
@@ -59,50 +43,44 @@ enum Message {
 }
 
 impl App {
-    fn new(path: PathBuf) -> (Self, Task<Message>) {
-        // Determine root directory: use git root if available, else parent dir
-        let root = git::find_git_root(&path)
-            .or_else(|| {
-                if path.is_dir() {
-                    Some(path.clone())
-                } else {
-                    path.parent().map(|p| p.to_path_buf())
-                }
+    fn new(path: Option<PathBuf>) -> (Self, Task<Message>) {
+        let config = Config::load();
+
+        // Canonicalize the input path so relative paths resolve correctly
+        let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
+
+        // Determine root directory: use git root if available, else parent/cwd
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = path
+            .as_ref()
+            .and_then(|p| {
+                git::find_git_root(p).or_else(|| {
+                    if p.is_dir() {
+                        Some(p.clone())
+                    } else {
+                        p.parent()
+                            .filter(|d| !d.as_os_str().is_empty())
+                            .map(|d| d.to_path_buf())
+                    }
+                })
             })
+            .or_else(|| git::find_git_root(&cwd).or(Some(cwd)))
             .unwrap_or_else(|| PathBuf::from("."));
 
         let mut file_tree = tree_fs::scan_directory(&root);
-        // Expand the path to the target file
-        expand_to_path(&mut file_tree, &path);
 
-        // Create pane grid with configurable tree position
-        let tree_on_left = true;
-        let (left_kind, right_kind) = if tree_on_left {
-            (PaneKind::Tree, PaneKind::Viewer)
-        } else {
-            (PaneKind::Viewer, PaneKind::Tree)
-        };
+        // Expand the path to the target file if one was given
+        if let Some(ref p) = path {
+            expand_to_path(&mut file_tree, p);
+        }
 
-        let (mut panes, left_pane) = pane_grid::State::new(left_kind);
-        let (right_pane, split) = panes
-            .split(pane_grid::Axis::Vertical, left_pane, right_kind)
-            .expect("Failed to split pane grid");
-
-        let ratio = if tree_on_left { 0.25 } else { 0.75 };
-        panes.resize(split, ratio);
-
-        let (tree_pane, viewer_pane) = if tree_on_left {
-            (left_pane, right_pane)
-        } else {
-            (right_pane, left_pane)
-        };
-
-        // Load initial document
-        let (document, markdown_items, current_file) = if path.is_file() {
-            let (doc, items) = load_document(&path);
-            (Some(doc), items, Some(path))
-        } else {
-            (None, Vec::new(), None)
+        // Load initial document if a file was specified
+        let (document, markdown_items, current_file) = match path.filter(|p| p.is_file()) {
+            Some(p) => {
+                let (doc, items) = load_document(&p);
+                (Some(doc), items, Some(p))
+            }
+            None => (None, Vec::new(), None),
         };
 
         // Find tree cursor for the current file
@@ -114,16 +92,13 @@ impl App {
 
         (
             Self {
-                panes,
-                _tree_pane: tree_pane,
-                _viewer_pane: viewer_pane,
-                _tree_on_left: tree_on_left,
+                config,
                 file_tree,
                 tree_cursor,
                 current_file,
                 document,
                 markdown_items,
-                focus: FocusedPane::Viewer,
+                focus: FocusedPane::Tree,
             },
             Task::none(),
         )
@@ -135,9 +110,6 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::PaneResized(pane_grid::ResizeEvent { split, ratio }) => {
-                self.panes.resize(split, ratio);
-            }
             Message::LinkClicked(_url) => {
                 // TODO: open links externally
             }
@@ -161,9 +133,7 @@ impl App {
 
                 // For emacs bindings, we want the latin character even on non-latin layouts
                 let latin = key.to_latin(physical_key);
-                let effective_key = latin
-                    .map(|c| c.to_string())
-                    .unwrap_or(key_str);
+                let effective_key = latin.map(|c| c.to_string()).unwrap_or(key_str);
 
                 let mods = nav::Modifiers {
                     ctrl: modifiers.control(),
@@ -187,6 +157,20 @@ impl App {
         match action {
             Action::ToggleFocus => {
                 self.focus.toggle();
+            }
+            Action::CloseFile => {
+                self.document = None;
+                self.markdown_items.clear();
+                self.current_file = None;
+            }
+            Action::FontSizeIncrease => {
+                self.config.font.increase_size();
+            }
+            Action::FontSizeDecrease => {
+                self.config.font.decrease_size();
+            }
+            Action::FontSizeReset => {
+                self.config.font.reset_size();
             }
             Action::Quit => {
                 return iced::exit();
@@ -230,8 +214,7 @@ impl App {
                 }
             }
 
-            // These are handled by the scrollable widget's built-in scrolling
-            // for now. We'll add programmatic scroll control later.
+            // Viewer scrolling handled by scrollable widget for now
             Action::ScrollDown
             | Action::ScrollUp
             | Action::PageDown
@@ -248,6 +231,7 @@ impl App {
             self.document = Some(doc);
             self.markdown_items = items;
             self.current_file = Some(path.to_path_buf());
+            self.focus = FocusedPane::Viewer;
 
             // Update tree cursor
             if let Some(idx) = find_cursor_for_path(&self.file_tree, path) {
@@ -257,26 +241,27 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let theme = Theme::Dark;
+        let tree_on_left = self.config.ui.tree_position != "right";
 
-        let pane_grid = pane_grid::PaneGrid::new(&self.panes, |id, pane, _| {
-            let content: Element<Message> = match pane {
-                PaneKind::Tree => self.view_tree(id),
-                PaneKind::Viewer => self.view_document(&theme),
-            };
-            pane_grid::Content::new(content)
-        })
-        .on_resize(4, Message::PaneResized);
+        let tree_pane = self.view_tree();
+        let viewer_pane = self.view_document();
 
-        container(pane_grid)
+        let layout = if tree_on_left {
+            Row::new().push(tree_pane).push(viewer_pane)
+        } else {
+            Row::new().push(viewer_pane).push(tree_pane)
+        };
+
+        container(layout.width(Length::Fill).height(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
 
-    fn view_tree(&self, _pane_id: pane_grid::Pane) -> Element<'_, Message> {
+    fn view_tree(&self) -> Element<'_, Message> {
         let flat = self.file_tree.flatten(0);
         let is_focused = self.focus == FocusedPane::Tree;
+        let tree_font_size = (self.config.font.size - 2.0).max(10.0);
 
         let entries: Vec<Element<Message>> = flat
             .iter()
@@ -290,14 +275,18 @@ impl App {
 
                 let indent = "  ".repeat(entry.depth);
                 let icon = if entry.node.is_dir() {
-                    if entry.node.is_expanded() { "▾ " } else { "▸ " }
+                    if entry.node.is_expanded() {
+                        "▾ "
+                    } else {
+                        "▸ "
+                    }
                 } else {
                     "  "
                 };
 
                 let label = text(format!("{indent}{icon}{}", entry.node.name))
                     .font(Font::MONOSPACE)
-                    .size(14);
+                    .size(tree_font_size);
 
                 let bg_color = if is_selected && is_focused {
                     Some(color!(0x3b4252)) // Nord selection
@@ -338,57 +327,72 @@ impl App {
 
         let tree_column = Column::with_children(entries).width(Length::Fill);
 
-        container(scrollable(tree_column))
-            .width(Length::Fill)
+        container(scrollable(tree_column).height(Length::Fill))
+            .width(Length::FillPortion(1))
             .height(Length::Fill)
             .padding(4)
+            .style(|_theme| container::Style {
+                background: Some(color!(0x242933).into()),
+                ..Default::default()
+            })
             .into()
     }
 
-    fn view_document(&self, theme: &Theme) -> Element<'_, Message> {
+    fn view_document(&self) -> Element<'_, Message> {
+        let font_size = self.config.font.size;
+
         let header: Element<Message> = if let Some(ref path) = self.current_file {
-            let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
-            container(
-                text(name.to_string()).size(12).font(Font::MONOSPACE),
-            )
-            .padding(4)
-            .style(|_theme| container::Style {
-                background: Some(color!(0x2e3440).into()),
-                ..Default::default()
-            })
-            .width(Length::Fill)
-            .into()
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
+            container(text(name.to_string()).size(12).font(Font::MONOSPACE))
+                .padding(4)
+                .style(|_theme| container::Style {
+                    background: Some(color!(0x2e3440).into()),
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .into()
         } else {
             container(text("")).into()
         };
 
-        let body: Element<Message> = if self.markdown_items.is_empty() && self.document.is_none() {
-            container(
-                text("Open a file from the tree to start reading.")
-                    .size(16)
-                    .color(color!(0x616e88)),
-            )
-            .center(Length::Fill)
-            .into()
-        } else {
-            let settings = markdown::Settings::with_style(theme.palette());
-            let md_view: Element<markdown::Uri> =
-                markdown::view(&self.markdown_items, settings);
+        let body: Element<Message> =
+            if self.markdown_items.is_empty() && self.document.is_none() {
+                container(
+                    text("Open a file from the tree to start reading.")
+                        .size(font_size)
+                        .color(color!(0x616e88)),
+                )
+                .center(Length::Fill)
+                .into()
+            } else {
+                let settings = markdown::Settings::with_text_size(
+                    font_size,
+                    Theme::Dark.palette(),
+                );
+                let md_view: Element<markdown::Uri> =
+                    markdown::view(&self.markdown_items, settings);
 
-            scrollable(
-                container(md_view.map(Message::LinkClicked))
-                    .padding(16)
-                    .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        };
+                scrollable(
+                    container(md_view.map(Message::LinkClicked))
+                        .padding(16)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            };
 
-        column![header, body]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        container(
+            column![header, body]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::FillPortion(3))
+        .height(Length::Fill)
+        .into()
     }
 }
 

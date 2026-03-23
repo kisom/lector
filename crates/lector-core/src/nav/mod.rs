@@ -19,6 +19,14 @@ pub enum Action {
     // Pane management
     ToggleFocus,
 
+    // File
+    CloseFile,
+
+    // Font
+    FontSizeIncrease,
+    FontSizeDecrease,
+    FontSizeReset,
+
     // Application
     Quit,
 }
@@ -74,6 +82,14 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
         // M-< and M->
         (false, true, "<") | (false, true, ",") => Some(Action::DocumentStart),
         (false, true, ">") | (false, true, ".") => Some(Action::DocumentEnd),
+
+        // C-w to close current file
+        (true, false, "w") => Some(Action::CloseFile),
+
+        // C-= / C-+ to increase font size, C-- to decrease, C-0 to reset
+        (true, false, "=" | "+") => Some(Action::FontSizeIncrease),
+        (true, false, "-") => Some(Action::FontSizeDecrease),
+        (true, false, "0") => Some(Action::FontSizeReset),
 
         // Tab to toggle focus
         (false, false, "tab") => Some(Action::ToggleFocus),
@@ -141,6 +157,14 @@ mod tests {
         assert_eq!(
             map_key("q", none(), FocusedPane::Viewer),
             Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn ctrl_w_closes_file() {
+        assert_eq!(
+            map_key("w", ctrl(), FocusedPane::Viewer),
+            Some(Action::CloseFile)
         );
     }
 
