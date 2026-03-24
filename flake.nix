@@ -44,11 +44,15 @@
         # Single derivation builds both binaries to share the dependency compile
         lector-all = pkgs.rustPlatform.buildRustPackage (commonBuildArgs // {
           pname = "lector";
-          version = "1.1.0";
+          version = "1.2.4";
           buildInputs = runtimeDeps;
+
+          # Ensure shared libs are found during check phase
+          LD_LIBRARY_PATH = libPath;
 
           postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             patchelf --set-rpath "${libPath}" $out/bin/lector
+            patchelf --set-rpath "${libPath}" $out/bin/clector
           '';
         });
 
@@ -56,10 +60,13 @@
 
         lector-tui = pkgs.rustPlatform.buildRustPackage (commonBuildArgs // {
           pname = "clector";
-          version = "1.1.0";
+          version = "1.2.4";
           cargoBuildFlags = [ "-p" "lector-tui" ];
           cargoTestFlags = [ "-p" "lector-tui" "-p" "lector-core" ];
           cargoCheckFlags = [ "-p" "lector-tui" ];
+
+          # Ensure shared libs are found during check phase
+          LD_LIBRARY_PATH = libPath;
 
           meta.mainProgram = "clector";
         });
