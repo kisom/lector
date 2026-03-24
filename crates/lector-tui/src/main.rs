@@ -143,12 +143,15 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
-        // Escape dismisses overlays
+        let is_cancel = key.code == KeyCode::Esc
+            || (key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL));
+
+        // C-h toggles help even when help is visible
         if key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL) && self.show_help {
             self.show_help = false;
             return;
         }
-        if key.code == KeyCode::Esc {
+        if is_cancel {
             if self.show_help {
                 self.show_help = false;
                 return;
@@ -183,8 +186,23 @@ impl App {
                 self.scroll_offset = 0;
             }
             Action::ShowHelp => self.show_help = !self.show_help,
+            Action::ReloadFile => {
+                if self.focus == FocusedPane::Tree {
+                    // Refresh tree
+                    let root = self.file_tree.path.clone();
+                    self.file_tree = tree_fs::scan_directory(&root);
+                } else if let Some(ref path) = self.current_file {
+                    // Reload document
+                    let path = path.clone();
+                    let (doc, lines) = load_and_render(&path);
+                    self.document = Some(doc);
+                    self.rendered_lines = lines;
+                }
+            }
+            Action::Search => {
+                // TUI search not implemented yet
+            }
             Action::CycleTheme => {
-                // TUI doesn't support CSS themes, but persist the preference
                 self.config.ui.cycle_theme();
             }
             Action::ToggleTree => {
@@ -196,8 +214,8 @@ impl App {
                 }
             }
             Action::Quit => self.running = false,
-            Action::ChangeDirectory => {
-                // TUI directory change not implemented yet
+            Action::OpenPath | Action::OpenBrowser => {
+                // TUI open path/browser not implemented yet
             }
             Action::FontSizeIncrease | Action::FontSizeDecrease | Action::FontSizeReset => {
                 // Font size not applicable in TUI
@@ -428,6 +446,8 @@ impl App {
             ("Tab", "Toggle pane focus"),
             ("Enter", "Open / toggle (tree)"),
             ("C-w", "Close file"),
+            ("C-r", "Reload / refresh tree"),
+            ("C-s", "Search (GUI only)"),
             ("C-t", "Toggle tree pane"),
             ("M-t", "Cycle theme"),
             ("C-h", "Toggle help"),

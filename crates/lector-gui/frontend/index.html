@@ -28,7 +28,10 @@
         <tr><td class="key">Tab</td><td>Toggle focus between tree and viewer</td></tr>
         <tr><td class="key">Enter</td><td>Open file / toggle directory (tree)</td></tr>
         <tr><td class="key">C-w</td><td>Close current file</td></tr>
-        <tr><td class="key">C-x C-f</td><td>Change working directory</td></tr>
+        <tr><td class="key">C-r</td><td>Reload file (viewer) / refresh tree (tree)</td></tr>
+        <tr><td class="key">C-s</td><td>Search in document</td></tr>
+        <tr><td class="key">C-x C-f</td><td>Open file or directory (Tab to complete)</td></tr>
+        <tr><td class="key">C-o</td><td>Visual file browser</td></tr>
         <tr><td class="key">C-t</td><td>Toggle tree pane</td></tr>
         <tr><td class="key">C-= / C--</td><td>Increase / decrease font size</td></tr>
         <tr><td class="key">C-0</td><td>Reset font size</td></tr>
@@ -41,9 +44,20 @@
     </div>
   </div>
 
-  <div id="dir-input-bar" class="hidden">
-    <span>Open directory: </span>
-    <input type="text" id="dir-input" placeholder="path...">
+  <div id="open-bar" class="hidden">
+    <span>Open: </span>
+    <input type="text" id="open-input" placeholder="path... (Tab to complete)">
+  </div>
+
+  <div id="file-browser" class="hidden">
+    <div id="file-browser-dialog">
+      <div id="file-browser-header"></div>
+      <div id="file-browser-filter">
+        <input type="text" id="browser-filter-input" placeholder="filter...">
+      </div>
+      <div id="file-browser-list"></div>
+      <div class="hint">Enter=open  C-n/C-p=navigate  type to filter  C-g=cancel</div>
+    </div>
   </div>
 
   <div id="search-bar" class="hidden">

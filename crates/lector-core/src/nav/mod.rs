@@ -23,7 +23,8 @@ pub enum Action {
     // File
     CloseFile,
     ReloadFile,
-    ChangeDirectory,
+    OpenPath,
+    OpenBrowser,
     Search,
 
     // Font
@@ -116,8 +117,8 @@ impl KeyMapper {
 
     fn map_chord(&mut self, prefix: &str, key: &str, mods: Modifiers) -> Option<Action> {
         match (prefix, mods.ctrl, key) {
-            // C-x C-f → change directory
-            ("x", true, "f") => Some(Action::ChangeDirectory),
+            // C-x C-f → open path (file or directory)
+            ("x", true, "f") => Some(Action::OpenPath),
             // C-x C-c → quit
             ("x", true, "c") => Some(Action::Quit),
             _ => None,
@@ -160,6 +161,9 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
 
         // C-s to search
         (true, false, "s") => Some(Action::Search),
+
+        // C-o to open visual file browser
+        (true, false, "o") => Some(Action::OpenBrowser),
 
         // C-h to show help
         (true, false, "h") => Some(Action::ShowHelp),
@@ -253,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn chord_cx_cf_changes_directory() {
+    fn chord_cx_cf_opens_path() {
         let mut mapper = KeyMapper::new();
         let focus = FocusedPane::Viewer;
 
@@ -264,7 +268,7 @@ mod tests {
         // C-f should complete the chord
         assert_eq!(
             mapper.process("f", ctrl(), focus),
-            Some(Action::ChangeDirectory)
+            Some(Action::OpenPath)
         );
         assert!(!mapper.has_pending());
     }

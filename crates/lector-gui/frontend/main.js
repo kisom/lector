@@ -132,38 +132,230 @@ async function refreshTree() {
   showToast('Tree refreshed');
 }
 
-// Dir input
-function showDirInput() {
-  const bar = document.getElementById('dir-input-bar');
-  const input = document.getElementById('dir-input');
+// Open path bar (C-x C-f) with tab completion
+function showOpenBar() {
+  const bar = document.getElementById('open-bar');
+  const input = document.getElementById('open-input');
   bar.classList.remove('hidden');
   input.value = '';
   input.focus();
 }
 
-function hideDirInput() {
-  document.getElementById('dir-input-bar').classList.add('hidden');
+function hideOpenBar() {
+  document.getElementById('open-bar').classList.add('hidden');
 }
 
-document.getElementById('dir-input').addEventListener('keydown', async (e) => {
-  if (e.key === 'Enter') {
-    const path = document.getElementById('dir-input').value;
-    if (path) {
-      await invoke('change_directory', { path });
+async function handleOpenPath(path) {
+  if (!path) return;
+  try {
+    const result = await invoke('open_path', { path });
+    if (result) {
+      // File was opened
+      currentFile = result.path || path;
+      document.getElementById('viewer-header').textContent = result.filename;
+      document.getElementById('viewer-content').innerHTML = result.html;
+      document.getElementById('viewer-content').scrollTop = 0;
+      focusedPane = 'viewer';
+    } else {
+      // Directory was changed
       currentFile = null;
       document.getElementById('viewer-header').textContent = '';
       document.getElementById('viewer-content').innerHTML =
         '<p class="placeholder">Open a file from the tree to start reading.</p>';
-      await loadTree();
-      treeCursor = 0;
     }
-    hideDirInput();
+    await loadTree();
+    treeCursor = 0;
+  } catch (err) {
+    showToast('Error: ' + err);
+  }
+}
+
+document.getElementById('open-input').addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    const path = document.getElementById('open-input').value;
+    hideOpenBar();
+    await handleOpenPath(path);
     e.preventDefault();
-  } else if (e.key === 'Escape') {
-    hideDirInput();
+  } else if (e.key === 'Escape' || (e.ctrlKey && e.key === 'g')) {
+    hideOpenBar();
+    e.preventDefault();
+  } else if (e.key === 'Tab') {
+    // Tab completion
+    e.preventDefault();
+    const input = document.getElementById('open-input');
+    const completions = await invoke('complete_path', { input: input.value });
+    if (completions.length === 1) {
+      input.value = completions[0];
+    } else if (completions.length > 1) {
+      // Find common prefix
+      let common = completions[0];
+      for (const c of completions) {
+        while (!c.startsWith(common)) {
+          common = common.slice(0, -1);
+        }
+      }
+      if (common.length > input.value.length) {
+        input.value = common;
+      } else {
+        showToast(completions.map(c => c.split('/').pop() || c).join('  '));
+      }
+    }
+  }
+  e.stopPropagation();
+});
+
+// Visual file browser (C-o)
+let browserEntries = [];
+let browserCursor = 0;
+let browserDir = '';
+
+async function showFileBrowser() {
+  // Start from current file's directory or tree root
+  const startDir = currentFile
+    ? currentFile.substring(0, currentFile.lastIndexOf('/'))
+    : flatTree[0]?.path || '/';
+  await loadBrowserDir(startDir);
+  document.getElementById('file-browser').classList.remove('hidden');
+  document.getElementById('browser-filter-input').value = '';
+  document.getElementById('browser-filter-input').focus();
+}
+
+function hideFileBrowser() {
+  document.getElementById('file-browser').classList.add('hidden');
+}
+
+async function loadBrowserDir(dir) {
+  browserDir = dir;
+  browserEntries = await invoke('browse_directory', { path: dir });
+  browserCursor = 0;
+  document.getElementById('file-browser-header').textContent = dir;
+  renderBrowser('');
+}
+
+function renderBrowser(filter) {
+  const list = document.getElementById('file-browser-list');
+  list.innerHTML = '';
+
+  const filtered = filter
+    ? browserEntries.filter(e => e.name.toLowerCase().includes(filter.toLowerCase()))
+    : browserEntries;
+
+  if (browserCursor >= filtered.length) browserCursor = Math.max(0, filtered.length - 1);
+
+  filtered.forEach((entry, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'browser-entry';
+    if (idx === browserCursor) btn.classList.add('selected');
+    if (entry.is_dir) btn.classList.add('directory');
+
+    const icon = entry.is_dir ? '📁 ' : '  ';
+    btn.textContent = icon + entry.name;
+
+    btn.addEventListener('click', () => {
+      browserCursor = idx;
+      selectBrowserEntry(filtered);
+    });
+
+    list.appendChild(btn);
+  });
+
+  // Scroll selected into view
+  const selected = list.querySelector('.selected');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
+}
+
+async function selectBrowserEntry(filtered) {
+  const entry = filtered[browserCursor];
+  if (!entry) {
+    // No entry selected (empty list or no matches) — open the current directory
+    hideFileBrowser();
+    await handleOpenPath(browserDir);
+    return;
+  }
+
+  if (entry.is_dir) {
+    await loadBrowserDir(entry.path);
+    document.getElementById('browser-filter-input').value = '';
+  } else {
+    hideFileBrowser();
+    await handleOpenPath(entry.path);
+  }
+}
+
+document.getElementById('browser-filter-input').addEventListener('keydown', async (e) => {
+  const filter = document.getElementById('browser-filter-input').value;
+  const filtered = filter
+    ? browserEntries.filter(en => en.name.toLowerCase().includes(filter.toLowerCase()))
+    : browserEntries;
+
+  if (e.key === 'Enter') {
+    await selectBrowserEntry(filtered);
+    e.preventDefault();
+  } else if (e.key === 'Escape' || (e.ctrlKey && e.key === 'g')) {
+    hideFileBrowser();
+    e.preventDefault();
+  } else if ((e.ctrlKey && e.key === 'n') || e.key === 'ArrowDown') {
+    browserCursor = Math.min(browserCursor + 1, filtered.length - 1);
+    renderBrowser(filter);
+    e.preventDefault();
+  } else if ((e.ctrlKey && e.key === 'p') || e.key === 'ArrowUp') {
+    browserCursor = Math.max(browserCursor - 1, 0);
+    renderBrowser(filter);
     e.preventDefault();
   }
-  e.stopPropagation(); // Don't let keybindings fire while typing
+  e.stopPropagation();
+});
+
+document.getElementById('browser-filter-input').addEventListener('input', (e) => {
+  browserCursor = 0;
+  renderBrowser(e.target.value);
+});
+
+// Search
+function showSearch() {
+  const bar = document.getElementById('search-bar');
+  const input = document.getElementById('search-input');
+  bar.classList.remove('hidden');
+  input.value = '';
+  document.getElementById('search-count').textContent = '';
+  input.focus();
+}
+
+function hideSearch() {
+  document.getElementById('search-bar').classList.add('hidden');
+  // Clear selection/highlights
+  window.getSelection().removeAllRanges();
+}
+
+function performSearch(query, forward) {
+  if (!query) return;
+  // window.find(string, caseSensitive, backwards, wrapAround)
+  const found = window.find(query, false, !forward, true);
+  document.getElementById('search-count').textContent = found ? '' : 'not found';
+}
+
+document.getElementById('search-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    performSearch(document.getElementById('search-input').value, !e.shiftKey);
+    e.preventDefault();
+  } else if (e.key === 'Escape' || (e.ctrlKey && e.key === 'g')) {
+    hideSearch();
+    e.preventDefault();
+  } else if (e.ctrlKey && e.key === 's') {
+    // C-s while in search = find next
+    performSearch(document.getElementById('search-input').value, true);
+    e.preventDefault();
+  } else if (e.ctrlKey && e.key === 'r') {
+    // C-r while in search = find previous
+    performSearch(document.getElementById('search-input').value, false);
+    e.preventDefault();
+  }
+  e.stopPropagation();
+});
+
+document.getElementById('search-input').addEventListener('input', (e) => {
+  // Incremental search: search as you type
+  performSearch(e.target.value, true);
 });
 
 // Help
@@ -227,9 +419,19 @@ function pageViewer(pages) {
 // Keybindings
 document.addEventListener('keydown', (e) => {
   // Don't intercept when dir input is focused
-  if (document.activeElement === document.getElementById('dir-input')) return;
+  // Don't intercept when an input field is focused
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
 
   const helpVisible = !document.getElementById('help-overlay').classList.contains('hidden');
+
+  // C-g: emacs "cancel" — dismiss overlays, cancel chords (never starts meta prefix)
+  if (e.ctrlKey && e.key === 'g') {
+    if (helpVisible) { toggleHelp(); e.preventDefault(); return; }
+    pendingPrefix = null;
+    e.preventDefault();
+    return;
+  }
 
   // Escape: dismiss overlays, cancel chords, or start ESC-as-Meta prefix
   if (e.key === 'Escape') {
@@ -273,7 +475,7 @@ document.addEventListener('keydown', (e) => {
 
   if (pendingPrefix === 'x') {
     pendingPrefix = null;
-    if (e.ctrlKey && e.key === 'f') { showDirInput(); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 'f') { showOpenBar(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'c') { saveCurrentPosition().then(() => invoke('quit')); e.preventDefault(); return; }
     e.preventDefault();
     return;
@@ -317,9 +519,11 @@ document.addEventListener('keydown', (e) => {
         else reloadFile();
         e.preventDefault(); return;
       case 's':
-        // Trigger browser-native find-in-page
-        // We can't programmatically open Ctrl+F in WebKit, so we let it through
-        return; // Don't preventDefault — let the browser handle C-s as find
+        showSearch();
+        e.preventDefault(); return;
+      case 'o':
+        showFileBrowser();
+        e.preventDefault(); return;
       case 't':
         toggleTreePane();
         e.preventDefault(); return;
