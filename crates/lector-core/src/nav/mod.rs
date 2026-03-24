@@ -19,6 +19,8 @@ pub enum Action {
     // Pane management
     ToggleFocus,
     ToggleTree,
+    ToggleToc,
+    CycleTocMode,
 
     // File
     CloseFile,
@@ -119,6 +121,10 @@ impl KeyMapper {
         match (prefix, mods.ctrl, key) {
             // C-x C-f → open path (file or directory)
             ("x", true, "f") => Some(Action::OpenPath),
+            // C-x C-t → toggle table of contents
+            ("x", true, "t") => Some(Action::ToggleToc),
+            // C-x C-m → cycle ToC mode (side panel vs replace tree)
+            ("x", true, "m") => Some(Action::CycleTocMode),
             // C-x C-c → quit
             ("x", true, "c") => Some(Action::Quit),
             _ => None,

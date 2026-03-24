@@ -249,6 +249,43 @@ html, body {
 
 #search-count { color: var(--fg-dim); }
 
+/* ToC pane */
+#toc-pane {
+  width: 20%;
+  min-width: 120px;
+  max-width: 300px;
+  background: var(--bg-tree);
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+
+#toc-pane.hidden { display: none; }
+
+.toc-entry {
+  display: block;
+  width: 100%;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-size: 0.85em;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toc-entry:hover { background: var(--bg-hover); }
+.toc-entry.h1 { font-weight: bold; }
+.toc-entry.h2 { padding-left: 16px; }
+.toc-entry.h3 { padding-left: 28px; }
+.toc-entry.h4 { padding-left: 40px; }
+.toc-entry.h5 { padding-left: 52px; }
+.toc-entry.h6 { padding-left: 64px; }
+
 /* Open path bar */
 #open-bar {
   position: fixed;

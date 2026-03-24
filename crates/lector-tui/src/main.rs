@@ -217,6 +217,9 @@ impl App {
             Action::OpenPath | Action::OpenBrowser => {
                 // TUI open path/browser not implemented yet
             }
+            Action::ToggleToc | Action::CycleTocMode => {
+                // TUI ToC not implemented yet
+            }
             Action::FontSizeIncrease | Action::FontSizeDecrease | Action::FontSizeReset => {
                 // Font size not applicable in TUI
             }

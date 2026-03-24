@@ -18,6 +18,8 @@ pub struct UiConfig {
     pub tree_width_ratio: f32,
     /// Theme name: "nord", "eink", or "tufte"
     pub theme: String,
+    /// If true, ToC always replaces the tree pane instead of using a third column
+    pub toc_replace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,7 @@ impl Default for UiConfig {
             tree_position: "left".to_string(),
             tree_width_ratio: 0.25,
             theme: "nord".to_string(),
+            toc_replace: false,
         }
     }
 }

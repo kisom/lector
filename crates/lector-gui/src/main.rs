@@ -353,8 +353,99 @@ fn quit(app: tauri::AppHandle, state: tauri::State<'_, Mutex<AppState>>) {
     app.exit(0);
 }
 
-/// Resolve a link: if it's a local file (relative to the current document), return its path.
-/// Otherwise open the URL in the default browser and return None.
+#[derive(Serialize)]
+struct TocEntry {
+    level: u8,
+    text: String,
+    id: String,
+}
+
+/// Extract headings from the current document's rendered HTML.
+/// Returns heading IDs and text for building a table of contents.
+#[tauri::command]
+fn get_headings(state: tauri::State<'_, Mutex<AppState>>) -> Vec<TocEntry> {
+    let state = state.lock().unwrap();
+    let Some(ref file) = state.current_file else {
+        return Vec::new();
+    };
+    let Ok(doc) = Document::load(file) else {
+        return Vec::new();
+    };
+    let html = render_to_html(&doc);
+    extract_headings(&html)
+}
+
+fn extract_headings(html: &str) -> Vec<TocEntry> {
+    // Simple regex-free parser: look for <h1-h6 id="...">...</h1-h6>
+    let mut entries = Vec::new();
+    let mut pos = 0;
+    let bytes = html.as_bytes();
+
+    while pos < bytes.len() {
+        // Find <h followed by a digit
+        if let Some(idx) = html[pos..].find("<h") {
+            let abs = pos + idx;
+            let after_h = abs + 2;
+            if after_h < bytes.len() && bytes[after_h].is_ascii_digit() {
+                let level = bytes[after_h] - b'0';
+                // Find the id attribute
+                let tag_end = html[abs..].find('>').map(|i| abs + i);
+                if let Some(te) = tag_end {
+                    let tag = &html[abs..te];
+                    let id = tag
+                        .find("id=\"")
+                        .map(|i| {
+                            let start = i + 4;
+                            let end = tag[start..].find('"').unwrap_or(0) + start;
+                            &tag[start..end]
+                        })
+                        .unwrap_or("");
+
+                    // Find closing tag
+                    let close_tag = format!("</h{level}>");
+                    if let Some(close_idx) = html[te..].find(&close_tag) {
+                        let text_start = te + 1;
+                        let text_end = te + close_idx;
+                        // Strip any inner HTML tags from the heading text
+                        let raw_text = &html[text_start..text_end];
+                        let text = strip_html_tags(raw_text);
+
+                        if !text.trim().is_empty() {
+                            entries.push(TocEntry {
+                                level,
+                                text: text.trim().to_string(),
+                                id: id.to_string(),
+                            });
+                        }
+                        pos = text_end;
+                        continue;
+                    }
+                }
+            }
+            pos = abs + 2;
+        } else {
+            break;
+        }
+    }
+    entries
+}
+
+fn strip_html_tags(s: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+    for c in s.chars() {
+        if c == '<' {
+            in_tag = true;
+        } else if c == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Resolve a link: if it's a local file, return its path. Otherwise open in browser.
 #[tauri::command]
 fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
     // Absolute file path
@@ -394,6 +485,7 @@ fn render_to_html(doc: &Document) -> String {
             opts.extension.strikethrough = true;
             opts.extension.tasklist = true;
             opts.extension.footnotes = true;
+            opts.extension.header_ids = Some("heading-".to_string());
             opts.render.unsafe_ = true;
             markdown_to_html(&doc.source, &opts)
         }
@@ -498,6 +590,7 @@ fn main() {
             refresh_tree,
             complete_path,
             browse_directory,
+            get_headings,
             resolve_link,
             get_config,
             cycle_theme,

@@ -6,6 +6,9 @@ let treeCursor = 0;
 let flatTree = [];
 let focusedPane = 'tree'; // 'tree' or 'viewer'
 let showTree = true;
+let showToc = false;
+let tocMode = 'auto'; // 'side', 'replace', 'auto'
+let tocReplace = false; // resolved mode: true = replace tree, false = side panel
 let pendingPrefix = null;
 let currentFile = null;
 let fontSize = 16;
@@ -18,6 +21,10 @@ async function init() {
   if (config.ui.theme) {
     document.body.className = 'theme-' + config.ui.theme;
   }
+  if (config.ui.toc_replace) {
+    tocMode = 'replace';
+  }
+  resolveTocMode();
 
   const initialPath = await invoke('get_initial_path');
   await loadTree();
@@ -103,6 +110,7 @@ async function openFile(path) {
 
   focusedPane = 'viewer';
   await loadTree();
+  if (showToc) refreshToc();
 }
 
 function closeFile() {
@@ -399,6 +407,99 @@ function toggleTreePane() {
   document.getElementById('tree-pane').classList.toggle('hidden', !showTree);
 }
 
+// Table of Contents
+function resolveTocMode() {
+  if (tocMode === 'replace') {
+    tocReplace = true;
+  } else if (tocMode === 'side') {
+    tocReplace = false;
+  } else {
+    // auto: replace if viewport < 100 characters wide (~800px)
+    tocReplace = window.innerWidth < 800;
+  }
+}
+
+async function toggleToc() {
+  showToc = !showToc;
+  resolveTocMode();
+
+  const app = document.getElementById('app');
+  const toc = document.getElementById('toc-pane');
+  const tree = document.getElementById('tree-pane');
+  const viewer = document.getElementById('viewer-pane');
+
+  if (showToc) {
+    await refreshToc();
+    if (tocReplace) {
+      // Replace tree: put ToC where tree is (before viewer)
+      tree.classList.add('hidden');
+      app.insertBefore(toc, viewer);
+      toc.classList.remove('hidden');
+      toc.style.borderLeft = 'none';
+      toc.style.borderRight = '1px solid var(--border)';
+    } else {
+      // Side mode: ToC on opposite side of tree (after viewer)
+      app.appendChild(toc);
+      toc.classList.remove('hidden');
+      toc.style.borderLeft = '1px solid var(--border)';
+      toc.style.borderRight = 'none';
+    }
+  } else {
+    toc.classList.add('hidden');
+    if (tocReplace) {
+      tree.classList.toggle('hidden', !showTree);
+    }
+  }
+}
+
+function cycleTocMode() {
+  if (tocMode === 'auto') tocMode = 'side';
+  else if (tocMode === 'side') tocMode = 'replace';
+  else tocMode = 'auto';
+
+  resolveTocMode();
+  showToast('ToC mode: ' + tocMode + (tocMode === 'auto' ? (tocReplace ? ' (replace)' : ' (side)') : ''));
+
+  // Re-apply if ToC is visible
+  if (showToc) {
+    showToc = false;
+    toggleToc();
+  }
+}
+
+async function refreshToc() {
+  const headings = await invoke('get_headings');
+  const pane = document.getElementById('toc-pane');
+  pane.innerHTML = '';
+
+  if (headings.length === 0) {
+    pane.innerHTML = '<div style="padding:8px;color:var(--fg-dim);font-size:0.85em">No headings</div>';
+    return;
+  }
+
+  headings.forEach(h => {
+    const btn = document.createElement('button');
+    btn.className = 'toc-entry h' + h.level;
+    btn.textContent = h.text;
+    btn.addEventListener('click', () => {
+      scrollToHeading(h.id);
+    });
+    pane.appendChild(btn);
+  });
+}
+
+function scrollToHeading(id) {
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Brief highlight
+    el.style.transition = 'background 0.3s';
+    el.style.background = 'var(--bg-selected)';
+    setTimeout(() => { el.style.background = ''; }, 1500);
+  }
+}
+
 // Cycle theme
 async function cycleTheme() {
   const newTheme = await invoke('cycle_theme');
@@ -476,6 +577,8 @@ document.addEventListener('keydown', (e) => {
   if (pendingPrefix === 'x') {
     pendingPrefix = null;
     if (e.ctrlKey && e.key === 'f') { showOpenBar(); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 't') { toggleToc(); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 'm') { cycleTocMode(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'c') { saveCurrentPosition().then(() => invoke('quit')); e.preventDefault(); return; }
     e.preventDefault();
     return;
