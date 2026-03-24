@@ -89,3 +89,32 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  homebrew:
+    name: Bump Homebrew formula
+    needs: release
+    if: ${{ !contains(github.ref, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Extract version
+        id: extract-version
+        run: |
+          echo "tag-name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: lector
+          formula-path: Formula/lector.rb
+          homebrew-tap: kisom/homebrew-tap
+          base-branch: master
+          tag-name: ${{ steps.extract-version.outputs.tag-name }}
+          commit-message: |
+            {{formulaName}} {{version}}
+
+            Created by https://github.com/mislav/bump-homebrew-formula-action
+        env:
+          COMMITTER_TOKEN: ${{ secrets.GH_CPAT }}
