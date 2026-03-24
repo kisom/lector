@@ -34,9 +34,11 @@ nix run github:kisom/lector#tui        # TUI
 Install to your profile:
 
 ```bash
-nix profile install github:kisom/lector        # GUI (lector)
-nix profile install github:kisom/lector#tui    # TUI (clector)
+nix profile install github:kisom/lector        # Both lector + clector
+nix profile install github:kisom/lector#tui    # TUI only (no WebKitGTK dependency)
 ```
+
+The default package includes both `lector` (GUI) and `clector` (TUI). The `#tui` package builds only the TUI for systems where you don't want the WebKitGTK dependency.
 
 Or add to your NixOS/home-manager configuration:
 
@@ -45,8 +47,8 @@ Or add to your NixOS/home-manager configuration:
 inputs.lector.url = "github:kisom/lector";
 
 # In your packages list
-inputs.lector.packages.${system}.default  # GUI
-inputs.lector.packages.${system}.tui      # TUI
+inputs.lector.packages.${system}.default  # Both GUI + TUI
+inputs.lector.packages.${system}.tui      # TUI only (lightweight)
 ```
 
 ### From source
