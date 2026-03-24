@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(nix develop:*)",
-      "Bash(nix flake:*)"
+      "Bash(nix flake:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
