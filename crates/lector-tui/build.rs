@@ -14,5 +14,4 @@ fn main() {
     println!("cargo::rustc-env=LECTOR_VERSION={}", git_version());
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/refs/tags");
-    tauri_build::build();
 }

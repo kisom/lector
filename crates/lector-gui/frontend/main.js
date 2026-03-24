@@ -26,6 +26,9 @@ async function init() {
   }
   resolveTocMode();
 
+  const version = await invoke('get_version');
+  document.getElementById('help-version').textContent = version;
+
   const initialPath = await invoke('get_initial_path');
   await loadTree();
 

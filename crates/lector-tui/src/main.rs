@@ -571,6 +571,11 @@ fn find_cursor_for_path(tree: &TreeNode, target: &std::path::Path) -> Option<usi
 }
 
 fn main() -> io::Result<()> {
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("clector {}", env!("LECTOR_VERSION"));
+        return Ok(());
+    }
+
     let path = std::env::args().nth(1).map(PathBuf::from);
     let mut app = App::new(path);
 

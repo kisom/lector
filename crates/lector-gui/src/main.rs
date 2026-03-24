@@ -480,6 +480,9 @@ fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option
 fn render_to_html(doc: &Document) -> String {
     match doc.format {
         Format::Markdown => {
+            let (meta, content) = extract_markdown_metadata(&doc.source);
+            let meta_html = metadata_to_html(&meta);
+
             let mut opts = Options::default();
             opts.extension.table = true;
             opts.extension.strikethrough = true;
@@ -487,7 +490,8 @@ fn render_to_html(doc: &Document) -> String {
             opts.extension.footnotes = true;
             opts.extension.header_ids = Some("heading-".to_string());
             opts.render.unsafe_ = true;
-            markdown_to_html(&doc.source, &opts)
+            let content_html = markdown_to_html(content, &opts);
+            format!("{meta_html}{content_html}")
         }
         Format::OrgMode => {
             let org = orgize::Org::parse(&doc.source);
@@ -534,9 +538,82 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Extract Pelican-style metadata from the top of a Markdown file.
+/// Returns (metadata key-value pairs, remaining content).
+/// Metadata format: `Key: value` lines at the start, ending at first blank line.
+fn extract_markdown_metadata(source: &str) -> (Vec<(String, String)>, &str) {
+    let mut meta = Vec::new();
+    let mut end = 0;
+
+    for line in source.lines() {
+        if line.is_empty() {
+            // Blank line terminates metadata
+            end += line.len() + 1; // +1 for newline
+            break;
+        }
+
+        // Match "Key: value" where Key is alphabetic/dash/underscore
+        if let Some(colon_pos) = line.find(": ") {
+            let key = &line[..colon_pos];
+            if !key.is_empty()
+                && key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                let value = line[colon_pos + 2..].trim();
+                meta.push((key.to_string(), value.to_string()));
+                end += line.len() + 1;
+                continue;
+            }
+        }
+
+        // Not a metadata line — no metadata in this file
+        return (Vec::new(), source);
+    }
+
+    if meta.is_empty() {
+        (Vec::new(), source)
+    } else {
+        let content = if end < source.len() {
+            &source[end..]
+        } else {
+            ""
+        };
+        (meta, content)
+    }
+}
+
+/// Render metadata key-value pairs as a styled HTML block.
+fn metadata_to_html(meta: &[(String, String)]) -> String {
+    if meta.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::from("<div class=\"doc-meta\"><dl>");
+    for (key, value) in meta {
+        html.push_str(&format!(
+            "<dt>{}</dt><dd>{}</dd>",
+            html_escape(key),
+            html_escape(value)
+        ));
+    }
+    html.push_str("</dl></div>");
+    html
+}
+
+#[tauri::command]
+fn get_version() -> String {
+    env!("LECTOR_VERSION").to_string()
+}
+
 // -- Main --
 
 fn main() {
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("lector {}", env!("LECTOR_VERSION"));
+        return;
+    }
+
     let path = std::env::args().nth(1).map(PathBuf::from);
     let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
 
@@ -592,6 +669,7 @@ fn main() {
             browse_directory,
             get_headings,
             resolve_link,
+            get_version,
             get_config,
             cycle_theme,
             adjust_font_size,

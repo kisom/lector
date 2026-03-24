@@ -108,6 +108,4 @@ SQLite (via `rusqlite`) in `$XDG_DATA_HOME/lector/positions.db` for file scroll 
 ## Planned Future Work
 
 - **File watching**: Auto-refresh when files change on disk (via `notify` crate).
-- **Link following**: Open URLs externally or navigate to local file links.
-- **Table of contents**: Sidebar or overlay showing document heading structure.
 - **TUI org-mode/RST rendering**: Currently shown as plain text; styled rendering planned.
