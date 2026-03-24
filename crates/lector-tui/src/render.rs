@@ -7,6 +7,7 @@ pub struct TocHeading {
     pub level: u8,
     pub text: String,
     pub line_index: usize,
+    pub is_annotation: bool,
 }
 
 /// Render markdown source into ratatui Lines with styling.
@@ -105,7 +106,7 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     if let Some((lvl, text)) = current_heading.take() {
                         // The heading line is the one about to be flushed
                         let line_index = lines.len(); // will be the index after flush
-                        headings.push(TocHeading { level: lvl, text, line_index });
+                        headings.push(TocHeading { level: lvl, text, line_index, is_annotation: false });
                     }
                     flush_line(&mut lines, &mut current_spans);
                     style_stack.pop();
@@ -254,7 +255,7 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         if let Some((lvl, text)) = current_heading.take() {
                             let line_index = lines.len();
-                            headings.push(TocHeading { level: lvl, text, line_index });
+                            headings.push(TocHeading { level: lvl, text, line_index, is_annotation: false });
                         }
                         flush_line(&mut lines, &mut spans);
                         style_stack.pop();

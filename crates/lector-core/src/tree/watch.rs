@@ -83,7 +83,7 @@ pub fn drain_events(
 /// Check if an event kind represents a change that affects directory contents.
 /// Filters out Access and Other events to avoid feedback loops when we read
 /// directories during refresh.
-fn is_content_change(kind: &EventKind) -> bool {
+pub fn is_content_change(kind: &EventKind) -> bool {
     matches!(
         kind,
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_)

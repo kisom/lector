@@ -100,7 +100,19 @@ async function openFile(path) {
   // Save position of previous file
   await saveCurrentPosition();
 
-  const response = await invoke('open_file', { path });
+  let response;
+  try {
+    response = await invoke('open_file', { path });
+  } catch (err) {
+    // File doesn't exist or can't be read
+    currentFile = null;
+    document.getElementById('viewer-header').textContent = '';
+    document.getElementById('viewer-content').innerHTML =
+      '<p style="color:var(--fg-dim);padding:1em">File doesn\u2019t exist.</p>';
+    focusedPane = 'viewer';
+    await loadTree();
+    return;
+  }
   currentFile = path;
   document.getElementById('viewer-header').textContent = response.filename;
   document.getElementById('viewer-content').innerHTML = response.html;

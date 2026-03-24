@@ -730,17 +730,33 @@ fn main() {
                     loop {
                         // Block until an event arrives (or timeout)
                         match rx.recv_timeout(std::time::Duration::from_millis(200)) {
-                            Ok(Ok(_event)) => {
+                            Ok(Ok(first_event)) => {
+                                if !tree_watch::is_content_change(&first_event.kind) {
+                                    continue;
+                                }
+
                                 // Debounce: wait briefly for more events to accumulate
                                 std::thread::sleep(std::time::Duration::from_millis(50));
 
-                                // Drain all pending events (including the initial one)
                                 let state: tauri::State<'_, Mutex<AppState>> = app_handle.state();
                                 let mut state = state.lock().unwrap();
                                 let watched = state.watcher.as_ref()
                                     .map(|w| w.watched_dirs.clone())
                                     .unwrap_or_default();
-                                let changed = tree_watch::drain_events(&rx, &watched);
+
+                                // Collect dirs from the first event + any pending events
+                                let mut changed = std::collections::HashSet::new();
+                                for path in &first_event.paths {
+                                    if let Some(parent) = path.parent() {
+                                        let parent = parent.to_path_buf();
+                                        if watched.contains(&parent) {
+                                            changed.insert(parent);
+                                        }
+                                    }
+                                }
+                                for dir in tree_watch::drain_events(&rx, &watched) {
+                                    changed.insert(dir);
+                                }
 
                                 if changed.is_empty() {
                                     continue;

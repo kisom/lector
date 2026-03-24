@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
 use lector_core::document::{Document, Format};
 use lector_core::nav::{Action, FocusedPane, KeyMapper, Modifiers};
+use lector_core::state::annotations::AnnotationStore;
 use lector_core::state::config::Config;
 use lector_core::tree::{self, fs as tree_fs, watch as tree_watch, TreeNode};
 
@@ -24,6 +25,7 @@ enum TocMode {
 struct App {
     config: Config,
     key_mapper: KeyMapper,
+    annotations: Option<AnnotationStore>,
 
     file_tree: TreeNode,
     tree_cursor: usize,
@@ -48,6 +50,8 @@ struct App {
     toc_mode: TocMode,
     watcher_handle: Option<tree_watch::WatcherHandle>,
     watcher_rx: Option<std::sync::mpsc::Receiver<notify::Result<notify::Event>>>,
+    annotation_input: Option<String>, // Some when annotation input is active
+    annotation_line: usize,           // line being annotated
     running: bool,
 }
 
@@ -99,6 +103,7 @@ impl App {
         Self {
             config,
             key_mapper: KeyMapper::new(),
+            annotations: AnnotationStore::open().ok(),
             file_tree,
             tree_cursor,
             current_file,
@@ -120,6 +125,8 @@ impl App {
             toc_mode,
             watcher_handle,
             watcher_rx,
+            annotation_input: None,
+            annotation_line: 0,
             running: true,
         }
     }
@@ -132,6 +139,41 @@ impl App {
         } else {
             // Allow scrolling to one line past content end
             self.rendered_lines.len().saturating_sub(self.viewer_height) + 1
+        }
+    }
+
+    fn refresh_toc_entries(&mut self) {
+        // Append annotations to existing headings
+        // First, remove old annotation entries
+        self.toc_headings.retain(|h| !h.is_annotation);
+
+        // Load annotations for current file
+        if let (Some(store), Some(ref file)) = (&self.annotations, &self.current_file) {
+            if let Ok(annotations) = store.load(file) {
+                for ann in annotations {
+                    self.toc_headings.push(render::TocHeading {
+                        level: 0,
+                        text: format!("📝 {}", if ann.comment.is_empty() { &ann.selected_text } else { &ann.comment }),
+                        line_index: ann.start_line as usize,
+                        is_annotation: true,
+                    });
+                }
+            }
+        }
+    }
+
+    fn save_annotation(&self, line: usize, comment: &str) {
+        if let (Some(store), Some(ref file)) = (&self.annotations, &self.current_file) {
+            // Get the text of the line being annotated
+            let text = self.rendered_lines.get(line)
+                .map(|l| l.to_string())
+                .unwrap_or_default();
+            let _ = store.save(
+                file,
+                line as u32, 0,
+                line as u32, text.len() as u32,
+                &text, comment, "yellow",
+            );
         }
     }
 
@@ -214,6 +256,27 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        // Annotation input mode
+        if let Some(ref mut input) = self.annotation_input {
+            match key.code {
+                KeyCode::Enter => {
+                    let comment = input.clone();
+                    let line = self.annotation_line;
+                    self.save_annotation(line, &comment);
+                    self.annotation_input = None;
+                    self.refresh_toc_entries();
+                }
+                KeyCode::Esc => { self.annotation_input = None; }
+                KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.annotation_input = None;
+                }
+                KeyCode::Char(c) => { input.push(c); }
+                KeyCode::Backspace => { input.pop(); }
+                _ => {}
+            }
+            return;
+        }
+
         let is_cancel = key.code == KeyCode::Esc
             || (key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL));
 
@@ -292,8 +355,25 @@ impl App {
             Action::OpenPath | Action::OpenBrowser => {
                 // TUI open path/browser not implemented yet
             }
-            Action::Annotate | Action::ListAnnotations => {
-                // TUI annotations not implemented yet
+            Action::Annotate => {
+                // Annotate the line at the current scroll position
+                if self.current_file.is_some() && !self.rendered_lines.is_empty() {
+                    self.annotation_line = self.scroll_offset;
+                    self.annotation_input = Some(String::new());
+                }
+            }
+            Action::ListAnnotations => {
+                // Open ToC and jump to first annotation
+                if !self.show_toc {
+                    self.show_toc = true;
+                    self.update_mouse_capture();
+                }
+                self.refresh_toc_entries();
+                let idx = self.toc_headings.iter().position(|h| h.is_annotation);
+                if let Some(i) = idx {
+                    self.toc_cursor = i;
+                    self.focus = FocusedPane::Toc;
+                }
             }
             Action::TreeSetRoot => {
                 if let Some(entry) = flat.get(self.tree_cursor) {
@@ -431,10 +511,21 @@ impl App {
             self.current_file = Some(path.to_path_buf());
             self.scroll_offset = 0;
             self.focus = FocusedPane::Viewer;
+            self.refresh_toc_entries();
 
             if let Some(idx) = tree::find_cursor_for_path(&self.file_tree, path) {
                 self.tree_cursor = idx;
             }
+        } else {
+            // File doesn't exist — clear viewer and show message
+            self.document = None;
+            self.rendered_lines = vec![Line::styled(
+                "File doesn\u{2019}t exist.",
+                Style::default().fg(Color::DarkGray),
+            )];
+            self.current_file = None;
+            self.scroll_offset = 0;
+            self.focus = FocusedPane::Viewer;
         }
     }
 
@@ -454,13 +545,24 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let area = frame.area();
-        self.term_width = area.width;
+        let full_area = frame.area();
+        self.term_width = full_area.width;
 
         if self.show_help {
-            self.draw_help(frame, area);
+            self.draw_help(frame, full_area);
             return;
         }
+
+        // Reserve a line at the bottom for annotation input if active
+        let (area, input_area) = if self.annotation_input.is_some() {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(full_area);
+            (chunks[0], Some(chunks[1]))
+        } else {
+            (full_area, None)
+        };
 
         let toc_replace = self.resolve_toc_replace(area.width);
         let show_tree_pane = self.show_tree && !(self.show_toc && toc_replace);
@@ -514,6 +616,14 @@ impl App {
                 "toc" => self.draw_toc(frame, chunks[i]),
                 _ => {}
             }
+        }
+
+        // Draw annotation input bar if active
+        if let (Some(ref input), Some(bar_area)) = (&self.annotation_input, input_area) {
+            let text = format!("Note (line {}): {}", self.annotation_line + 1, input);
+            let bar = Paragraph::new(text)
+                .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+            frame.render_widget(bar, bar_area);
         }
     }
 
@@ -705,7 +815,9 @@ impl App {
             ("Enter", "Open / toggle (tree)"),
             ("C-w", "Close file"),
             ("C-r", "Reload / refresh tree"),
-            ("C-s", "Search (GUI only)"),
+            ("C-m", "Annotate current line"),
+            ("C-x C-a", "List annotations"),
+            ("C-x C-d", "Set tree root"),
             ("C-x C-t", "Toggle table of contents"),
             ("C-x C-m", "Cycle ToC mode"),
             ("C-t", "Toggle tree pane"),
