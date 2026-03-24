@@ -3,7 +3,8 @@
     "allow": [
       "Bash(nix develop:*)",
       "Bash(nix flake:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git diff-tree:*)"
     ]
   }
 }

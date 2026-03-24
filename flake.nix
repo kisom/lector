@@ -22,6 +22,8 @@
           openssl
           librsvg
           libsoup_3
+          pango
+          harfbuzz
           zlib
 
           # Fonts
@@ -31,36 +33,36 @@
 
         libPath = pkgs.lib.makeLibraryPath runtimeDeps;
 
-        lector-gui = pkgs.rustPlatform.buildRustPackage {
-          pname = "lector";
-          version = "0.1.0";
+        commonBuildArgs = {
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "lector-gui" ];
+          nativeBuildInputs = with pkgs; [ pkg-config mold clang ];
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "clang";
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+        };
 
-          nativeBuildInputs = with pkgs; [ pkg-config ];
+        # Single derivation builds both binaries to share the dependency compile
+        lector-all = pkgs.rustPlatform.buildRustPackage (commonBuildArgs // {
+          pname = "lector";
+          version = "1.1.0";
           buildInputs = runtimeDeps;
 
           postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             patchelf --set-rpath "${libPath}" $out/bin/lector
           '';
+        });
 
-          meta.mainProgram = "lector";
-        };
+        lector-gui = lector-all;
 
-        lector-tui = pkgs.rustPlatform.buildRustPackage {
+        lector-tui = pkgs.rustPlatform.buildRustPackage (commonBuildArgs // {
           pname = "clector";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
+          version = "1.1.0";
           cargoBuildFlags = [ "-p" "lector-tui" ];
           cargoTestFlags = [ "-p" "lector-tui" "-p" "lector-core" ];
           cargoCheckFlags = [ "-p" "lector-tui" ];
 
-          nativeBuildInputs = with pkgs; [ pkg-config ];
-
           meta.mainProgram = "clector";
-        };
+        });
       in
       {
         packages = {
@@ -77,6 +79,8 @@
             rustfmt
             rust-analyzer
             pkg-config
+            mold
+            clang
           ]);
 
           shellHook = ''
