@@ -529,7 +529,9 @@ fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>) {
         Ok(doc) => {
             let lines = match doc.format {
                 Format::Markdown => render::render_markdown(&doc.source),
-                _ => doc
+                Format::OrgMode => render::render_org(&doc.source),
+                Format::ReStructuredText => render::render_rst(&doc.source),
+                Format::Plain => doc
                     .source
                     .lines()
                     .map(|l| Line::raw(l.to_string()))
