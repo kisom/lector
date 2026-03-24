@@ -185,6 +185,16 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let format = format!("{:?}", doc.format);
+
+        // Rescan tree if the file is under a different root
+        let new_root = git::find_git_root(&file_path)
+            .or_else(|| file_path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| file_path.clone());
+        if new_root != state.file_tree.path {
+            state.file_tree = tree_fs::scan_directory(&new_root);
+            expand_to_path(&mut state.file_tree, &file_path);
+        }
+
         state.current_file = Some(file_path);
         Ok(Some(DocumentResponse { html, filename, format }))
     } else {
