@@ -129,6 +129,19 @@ fn cycle_theme(state: tauri::State<'_, Mutex<AppState>>) -> String {
 }
 
 #[tauri::command]
+fn adjust_font_size(delta: f32, state: tauri::State<'_, Mutex<AppState>>) -> f32 {
+    let mut state = state.lock().unwrap();
+    if delta > 0.0 {
+        state.config.font.increase_size();
+    } else if delta < 0.0 {
+        state.config.font.decrease_size();
+    } else {
+        state.config.font.reset_size();
+    }
+    state.config.font.size
+}
+
+#[tauri::command]
 fn save_position(path: String, offset: f64, state: tauri::State<'_, Mutex<AppState>>) {
     let state = state.lock().unwrap();
     if let Some(positions) = &state.positions {
@@ -252,6 +265,7 @@ fn main() {
             change_directory,
             get_config,
             cycle_theme,
+            adjust_font_size,
             save_position,
             load_position,
             quit,

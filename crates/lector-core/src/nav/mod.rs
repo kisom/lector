@@ -78,10 +78,21 @@ impl KeyMapper {
     pub fn process(&mut self, key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action> {
         // Check if we're completing a chord
         if let Some(prefix) = self.pending_prefix.take() {
+            if prefix == "escape" {
+                // ESC acts as Meta prefix: ESC x = M-x
+                let meta_mods = Modifiers { alt: true, ..mods };
+                return map_key(key, meta_mods, focus);
+            }
             return self.map_chord(&prefix, key, mods);
         }
 
-        // Check if this starts a chord (C-x)
+        // ESC starts a Meta prefix (emacs: ESC x = M-x)
+        if key == "escape" && !mods.ctrl && !mods.alt {
+            self.pending_prefix = Some("escape".to_string());
+            return None;
+        }
+
+        // C-x starts a chord prefix
         if mods.ctrl && !mods.alt && key == "x" {
             self.pending_prefix = Some("x".to_string());
             return None;
@@ -259,6 +270,30 @@ mod tests {
         assert_eq!(
             mapper.process("c", ctrl(), focus),
             Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn escape_as_meta_prefix() {
+        let mut mapper = KeyMapper::new();
+        let focus = FocusedPane::Viewer;
+
+        // ESC then v = M-v = PageUp
+        assert_eq!(mapper.process("escape", none(), focus), None);
+        assert!(mapper.has_pending());
+        assert_eq!(mapper.process("v", none(), focus), Some(Action::PageUp));
+        assert!(!mapper.has_pending());
+    }
+
+    #[test]
+    fn escape_then_t_cycles_theme() {
+        let mut mapper = KeyMapper::new();
+        let focus = FocusedPane::Viewer;
+
+        assert_eq!(mapper.process("escape", none(), focus), None);
+        assert_eq!(
+            mapper.process("t", none(), focus),
+            Some(Action::CycleTheme)
         );
     }
 

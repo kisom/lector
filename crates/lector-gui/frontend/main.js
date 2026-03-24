@@ -14,7 +14,7 @@ let fontSize = 16;
 async function init() {
   const config = await invoke('get_config');
   fontSize = config.font.size;
-  document.documentElement.style.fontSize = fontSize + 'px';
+  applyFontSize();
   if (config.ui.theme) {
     document.body.className = 'theme-' + config.ui.theme;
   }
@@ -153,15 +153,34 @@ function toggleHelp() {
   document.getElementById('help-overlay').classList.toggle('hidden');
 }
 
-// Font size
-function adjustFontSize(delta) {
-  fontSize = Math.max(8, Math.min(48, fontSize + delta));
-  document.documentElement.style.fontSize = fontSize + 'px';
+// Font size — goes through Rust to persist in config
+function applyFontSize() {
+  document.documentElement.style.setProperty('--font-size', fontSize + 'px');
+  showToast(`Font size: ${fontSize}px`);
 }
 
-function resetFontSize() {
-  fontSize = 16;
-  document.documentElement.style.fontSize = '16px';
+function showToast(msg) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.style.cssText = 'position:fixed;bottom:32px;right:32px;background:var(--bg-header);color:var(--fg);padding:6px 16px;border-radius:4px;border:1px solid var(--border);font-size:14px;opacity:0;transition:opacity 0.2s;z-index:200;pointer-events:none';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = '1';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.style.opacity = '0'; }, 1500);
+}
+
+async function adjustFontSize(delta) {
+  fontSize = await invoke('adjust_font_size', { delta });
+  applyFontSize();
+}
+
+async function resetFontSize() {
+  fontSize = await invoke('adjust_font_size', { delta: 0.0 });
+  applyFontSize();
 }
 
 // Toggle tree pane
@@ -194,10 +213,13 @@ document.addEventListener('keydown', (e) => {
 
   const helpVisible = !document.getElementById('help-overlay').classList.contains('hidden');
 
-  // Escape
+  // Escape: dismiss overlays, cancel chords, or start ESC-as-Meta prefix
   if (e.key === 'Escape') {
     if (helpVisible) { toggleHelp(); e.preventDefault(); return; }
     if (pendingPrefix) { pendingPrefix = null; e.preventDefault(); return; }
+    // ESC acts as Meta prefix (emacs: ESC x = M-x)
+    pendingPrefix = 'escape';
+    e.preventDefault();
     return;
   }
 
@@ -211,6 +233,23 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && !e.altKey && e.key === 'x') {
     pendingPrefix = 'x';
     e.preventDefault();
+    return;
+  }
+
+  if (pendingPrefix === 'escape') {
+    // ESC prefix: treat next key as Alt+key
+    pendingPrefix = null;
+    // Synthesize an Alt key event by dispatching to the Alt handler
+    const key = e.key;
+    e.preventDefault();
+    switch (key) {
+      case 'v': pageViewer(-1); return;
+      case 't': cycleTheme(); return;
+      case '<': case ',':
+        document.getElementById('viewer-content').scrollTop = 0; return;
+      case '>': case '.':
+        { const el = document.getElementById('viewer-content'); el.scrollTop = el.scrollHeight; } return;
+    }
     return;
   }
 
