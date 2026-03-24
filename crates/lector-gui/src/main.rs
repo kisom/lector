@@ -660,8 +660,9 @@ fn main() {
         return;
     }
 
-    // Detach from terminal unless --no-detach is passed
-    #[cfg(unix)]
+    // Detach from terminal unless --no-detach is passed.
+    // Only on Linux — macOS system frameworks (WKWebView, XPC) are not fork-safe.
+    #[cfg(target_os = "linux")]
     if !std::env::args().any(|a| a == "--no-detach") {
         unsafe {
             let pid = libc::fork();
