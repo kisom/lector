@@ -261,6 +261,51 @@ html, body {
 
 #search-count { color: var(--fg-dim); }
 
+/* Annotation bar */
+#annotation-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--bg-header);
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  z-index: 50;
+}
+
+#annotation-bar.hidden { display: none; }
+
+#annotation-input {
+  flex: 1;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 1em;
+  outline: none;
+}
+
+/* Annotation highlights */
+::highlight(annotation-yellow) { background: rgba(255, 200, 50, 0.3); }
+::highlight(annotation-green) { background: rgba(100, 200, 100, 0.3); }
+::highlight(annotation-blue) { background: rgba(100, 150, 255, 0.3); }
+::highlight(annotation-pink) { background: rgba(255, 100, 150, 0.3); }
+
+.annotation-tooltip {
+  position: absolute;
+  background: var(--bg-header);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.8em;
+  color: var(--fg);
+  max-width: 300px;
+  z-index: 200;
+  pointer-events: none;
+}
+
 /* ToC pane */
 #toc-pane {
   width: 20%;

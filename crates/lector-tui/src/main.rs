@@ -261,6 +261,9 @@ impl App {
             Action::OpenPath | Action::OpenBrowser => {
                 // TUI open path/browser not implemented yet
             }
+            Action::Annotate | Action::ListAnnotations => {
+                // TUI annotations not implemented yet
+            }
             Action::ToggleToc => {
                 self.show_toc = !self.show_toc;
                 if self.show_toc {

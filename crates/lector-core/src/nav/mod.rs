@@ -22,6 +22,10 @@ pub enum Action {
     ToggleToc,
     CycleTocMode,
 
+    // Annotations
+    Annotate,
+    ListAnnotations,
+
     // File
     CloseFile,
     ReloadFile,
@@ -121,6 +125,8 @@ impl KeyMapper {
         match (prefix, mods.ctrl, key) {
             // C-x C-f → open path (file or directory)
             ("x", true, "f") => Some(Action::OpenPath),
+            // C-x C-a → list annotations
+            ("x", true, "a") => Some(Action::ListAnnotations),
             // C-x C-t → toggle table of contents
             ("x", true, "t") => Some(Action::ToggleToc),
             // C-x C-m → cycle ToC mode (side panel vs replace tree)
@@ -170,6 +176,9 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
 
         // C-o to open visual file browser
         (true, false, "o") => Some(Action::OpenBrowser),
+
+        // C-m to annotate selection
+        (true, false, "m") => Some(Action::Annotate),
 
         // C-h to show help
         (true, false, "h") => Some(Action::ShowHelp),

@@ -114,6 +114,7 @@ async function openFile(path) {
   focusedPane = 'viewer';
   await loadTree();
   if (showToc) refreshToc();
+  applyAnnotations();
 }
 
 function closeFile() {
@@ -630,6 +631,9 @@ document.addEventListener('keydown', (e) => {
       case 'o':
         showFileBrowser();
         e.preventDefault(); return;
+      case 'm':
+        showAnnotationBar();
+        e.preventDefault(); return;
       case 't':
         toggleTreePane();
         e.preventDefault(); return;
@@ -685,6 +689,190 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault(); return;
     }
   }
+});
+
+// -- Annotations --
+
+let pendingAnnotationRange = null;
+
+function showAnnotationBar() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) {
+    showToast('Select text first');
+    return;
+  }
+
+  // Capture the selected text and its text offset within viewer-content
+  const range = sel.getRangeAt(0);
+  const selectedText = sel.toString().trim();
+  if (!selectedText) {
+    showToast('Select text first');
+    return;
+  }
+
+  // Calculate text offset: count characters from start of viewer-content to selection
+  const viewer = document.getElementById('viewer-content');
+  const preRange = document.createRange();
+  preRange.setStart(viewer, 0);
+  preRange.setEnd(range.startContainer, range.startOffset);
+  const startOffset = preRange.toString().length;
+  const endOffset = startOffset + selectedText.length;
+
+  // Map text offsets to source line+column
+  if (!currentFile) return;
+
+  pendingAnnotationRange = {
+    selectedText,
+    startOffset,
+    endOffset,
+  };
+
+  const bar = document.getElementById('annotation-bar');
+  const input = document.getElementById('annotation-input');
+  bar.classList.remove('hidden');
+  input.value = '';
+  input.focus();
+}
+
+async function saveAnnotation(comment) {
+  if (!pendingAnnotationRange || !currentFile) return;
+
+  const { selectedText, startOffset, endOffset } = pendingAnnotationRange;
+
+  // Map offsets to source line+col using the viewer's text content
+  const viewerText = document.getElementById('viewer-content').textContent;
+  const startPos = offsetToLineCol(viewerText, startOffset);
+  const endPos = offsetToLineCol(viewerText, endOffset);
+
+  try {
+    await invoke('save_annotation', {
+      filePath: currentFile,
+      startLine: startPos.line,
+      startCol: startPos.col,
+      endLine: endPos.line,
+      endCol: endPos.col,
+      selectedText,
+      comment: comment || '',
+      color: 'yellow',
+    });
+    showToast('Annotation saved');
+    await applyAnnotations();
+  } catch (err) {
+    showToast('Error: ' + err);
+  }
+
+  pendingAnnotationRange = null;
+}
+
+function offsetToLineCol(text, offset) {
+  let line = 0;
+  let col = 0;
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text[i] === '\n') {
+      line++;
+      col = 0;
+    } else {
+      col++;
+    }
+  }
+  return { line, col };
+}
+
+function lineColToOffset(text, line, col) {
+  let currentLine = 0;
+  let offset = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (currentLine === line) {
+      return offset + col;
+    }
+    if (text[i] === '\n') {
+      currentLine++;
+      offset = i + 1;
+    }
+  }
+  return offset + col;
+}
+
+async function applyAnnotations() {
+  if (!currentFile || !CSS.highlights) return;
+
+  // Clear existing highlights
+  CSS.highlights.clear();
+
+  const annotations = await invoke('get_annotations', { filePath: currentFile });
+  if (!annotations.length) return;
+
+  const viewer = document.getElementById('viewer-content');
+  const viewerText = viewer.textContent;
+  const treeWalker = document.createTreeWalker(viewer, NodeFilter.SHOW_TEXT);
+
+  // Build a list of text nodes with their offsets
+  const textNodes = [];
+  let totalOffset = 0;
+  while (treeWalker.nextNode()) {
+    const node = treeWalker.currentNode;
+    textNodes.push({ node, start: totalOffset, end: totalOffset + node.length });
+    totalOffset += node.length;
+  }
+
+  // Group annotations by color
+  const byColor = {};
+  for (const ann of annotations) {
+    const startOff = lineColToOffset(viewerText, ann.start_line, ann.start_col);
+    const endOff = lineColToOffset(viewerText, ann.end_line, ann.end_col);
+
+    // Find text nodes that overlap this range
+    const range = document.createRange();
+    let rangeSet = false;
+
+    for (const tn of textNodes) {
+      if (tn.end <= startOff) continue;
+      if (tn.start >= endOff) break;
+
+      if (!rangeSet) {
+        const localStart = Math.max(0, startOff - tn.start);
+        range.setStart(tn.node, localStart);
+        rangeSet = true;
+      }
+      const localEnd = Math.min(tn.node.length, endOff - tn.start);
+      range.setEnd(tn.node, localEnd);
+    }
+
+    if (rangeSet) {
+      const color = ann.color || 'yellow';
+      if (!byColor[color]) byColor[color] = [];
+      byColor[color].push(new Range().constructor === Range ? range : range);
+
+      // Store annotation data on the range for tooltip
+      range._annotation = ann;
+    }
+  }
+
+  // Register highlights
+  for (const [color, ranges] of Object.entries(byColor)) {
+    if (ranges.length > 0) {
+      const highlight = new Highlight(...ranges);
+      CSS.highlights.set('annotation-' + color, highlight);
+    }
+  }
+}
+
+function hideAnnotationBar() {
+  document.getElementById('annotation-bar').classList.add('hidden');
+  pendingAnnotationRange = null;
+}
+
+document.getElementById('annotation-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const comment = document.getElementById('annotation-input').value;
+    hideAnnotationBar();
+    saveAnnotation(comment);
+    e.preventDefault();
+  } else if (e.key === 'Escape' || (e.ctrlKey && e.key === 'g')) {
+    hideAnnotationBar();
+    e.preventDefault();
+  }
+  e.stopPropagation();
 });
 
 // Intercept link clicks in the viewer — local files open in lector, others in browser

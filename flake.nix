@@ -22,6 +22,7 @@
           openssl
           librsvg
           libsoup_3
+          zlib
 
           # Fonts
           fontconfig
@@ -53,6 +54,8 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "lector-tui" ];
+          cargoTestFlags = [ "-p" "lector-tui" "-p" "lector-core" ];
+          cargoCheckFlags = [ "-p" "lector-tui" ];
 
           nativeBuildInputs = with pkgs; [ pkg-config ];
 

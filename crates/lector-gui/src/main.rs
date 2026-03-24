@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use comrak::{markdown_to_html, Options};
 use serde::Serialize;
 use lector_core::document::{markdown, Document, Format};
+use lector_core::state::annotations::{Annotation, AnnotationStore};
 use lector_core::state::config::Config;
 use lector_core::state::position::PositionStore;
 use lector_core::tree::{self, fs as tree_fs, git, TreeNode};
@@ -14,6 +15,7 @@ use lector_core::tree::{self, fs as tree_fs, git, TreeNode};
 struct AppState {
     config: Config,
     positions: Option<PositionStore>,
+    annotations: Option<AnnotationStore>,
     file_tree: TreeNode,
     current_file: Option<PathBuf>,
     initial_path: Option<PathBuf>,
@@ -445,6 +447,49 @@ fn strip_html_tags(s: &str) -> String {
     result
 }
 
+// -- Annotations --
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn save_annotation(
+    file_path: String,
+    start_line: u32,
+    start_col: u32,
+    end_line: u32,
+    end_col: u32,
+    selected_text: String,
+    comment: String,
+    color: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<i64, String> {
+    let state = state.lock().unwrap();
+    let store = state.annotations.as_ref().ok_or("Annotation store not available")?;
+    store
+        .save(
+            std::path::Path::new(&file_path),
+            start_line, start_col, end_line, end_col,
+            &selected_text, &comment, &color,
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_annotations(file_path: String, state: tauri::State<'_, Mutex<AppState>>) -> Vec<Annotation> {
+    let state = state.lock().unwrap();
+    state
+        .annotations
+        .as_ref()
+        .and_then(|s| s.load(std::path::Path::new(&file_path)).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn delete_annotation(id: i64, state: tauri::State<'_, Mutex<AppState>>) -> Result<bool, String> {
+    let state = state.lock().unwrap();
+    let store = state.annotations.as_ref().ok_or("Annotation store not available")?;
+    store.delete(id).map_err(|e| e.to_string())
+}
+
 /// Resolve a link: if it's a local file, return its path. Otherwise open in browser.
 #[tauri::command]
 fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
@@ -564,6 +609,7 @@ fn main() {
 
     let config = Config::load();
     let positions = PositionStore::open().ok();
+    let annotations = AnnotationStore::open().ok();
 
     let root = tree::resolve_root(path.as_deref());
 
@@ -579,6 +625,7 @@ fn main() {
     let app_state = AppState {
         config,
         positions,
+        annotations,
         file_tree,
         current_file: None,
         initial_path,
@@ -597,6 +644,9 @@ fn main() {
             complete_path,
             browse_directory,
             get_headings,
+            save_annotation,
+            get_annotations,
+            delete_annotation,
             resolve_link,
             get_version,
             get_config,
