@@ -2230,7 +2230,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "lector-core"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "directories",
  "git2",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "lector-gui"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "comrak",
  "lector-core",
@@ -2264,7 +2264,7 @@ dependencies = [
 
 [[package]]
 name = "lector-tui"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "crossterm",
  "lector-core",
