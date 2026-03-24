@@ -107,8 +107,7 @@ SQLite (via `rusqlite`) in `$XDG_DATA_HOME/lector/positions.db` for file scroll 
 
 ## Planned Future Work
 
-- **reStructuredText support**: Add `orgize` and `rst_renderer` rendering paths (Phase 5b).
-- **Org-mode support**: Add `orgize` rendering path (Phase 5b).
 - **File watching**: Auto-refresh when files change on disk (via `notify` crate).
 - **Link following**: Open URLs externally or navigate to local file links.
 - **Table of contents**: Sidebar or overlay showing document heading structure.
+- **TUI org-mode/RST rendering**: Currently shown as plain text; styled rendering planned.

@@ -104,6 +104,45 @@ fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<D
 }
 
 #[tauri::command]
+fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<DocumentResponse>, String> {
+    let state = state.lock().unwrap();
+    let Some(ref file_path) = state.current_file else {
+        return Ok(None);
+    };
+    let doc = Document::load(file_path).map_err(|e| e.to_string())?;
+    let html = render_to_html(&doc);
+    let filename = file_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let format = format!("{:?}", doc.format);
+    Ok(Some(DocumentResponse { html, filename, format }))
+}
+
+#[tauri::command]
+fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
+    let mut state = state.lock().unwrap();
+    let root = state.file_tree.path.clone();
+    state.file_tree = tree_fs::scan_directory(&root);
+    let flat = state.file_tree.flatten(0);
+    let entries = flat
+        .iter()
+        .map(|entry| TreeEntry {
+            name: entry.node.name.clone(),
+            path: entry.node.path.to_string_lossy().into_owned(),
+            depth: entry.depth,
+            is_dir: entry.node.is_dir(),
+            is_expanded: entry.node.is_expanded(),
+            is_current: state
+                .current_file
+                .as_ref()
+                .is_some_and(|cf| cf == &entry.node.path),
+        })
+        .collect();
+    TreeResponse { entries }
+}
+
+#[tauri::command]
 fn change_directory(path: String, state: tauri::State<'_, Mutex<AppState>>) {
     let expanded = shellexpand::tilde(&path);
     let path = PathBuf::from(expanded.as_ref());
@@ -262,6 +301,8 @@ fn main() {
             get_tree,
             toggle_dir,
             open_file,
+            reload_file,
+            refresh_tree,
             change_directory,
             get_config,
             cycle_theme,

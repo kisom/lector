@@ -22,7 +22,9 @@ pub enum Action {
 
     // File
     CloseFile,
+    ReloadFile,
     ChangeDirectory,
+    Search,
 
     // Font
     FontSizeIncrease,
@@ -152,6 +154,12 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
 
         // C-w to close current file
         (true, false, "w") => Some(Action::CloseFile),
+
+        // C-r to reload file (viewer) or refresh tree (tree)
+        (true, false, "r") => Some(Action::ReloadFile),
+
+        // C-s to search
+        (true, false, "s") => Some(Action::Search),
 
         // C-h to show help
         (true, false, "h") => Some(Action::ShowHelp),

@@ -114,6 +114,24 @@ function closeFile() {
   loadTree();
 }
 
+async function reloadFile() {
+  const result = await invoke('reload_file');
+  if (result) {
+    const scrollPos = document.getElementById('viewer-content').scrollTop;
+    document.getElementById('viewer-header').textContent = result.filename;
+    document.getElementById('viewer-content').innerHTML = result.html;
+    document.getElementById('viewer-content').scrollTop = scrollPos;
+    showToast('Reloaded');
+  }
+}
+
+async function refreshTree() {
+  const response = await invoke('refresh_tree');
+  flatTree = response.entries;
+  renderTree();
+  showToast('Tree refreshed');
+}
+
 // Dir input
 function showDirInput() {
   const bar = document.getElementById('dir-input-bar');
@@ -294,6 +312,14 @@ document.addEventListener('keydown', (e) => {
       case 'w':
         closeFile();
         e.preventDefault(); return;
+      case 'r':
+        if (focusedPane === 'tree') refreshTree();
+        else reloadFile();
+        e.preventDefault(); return;
+      case 's':
+        // Trigger browser-native find-in-page
+        // We can't programmatically open Ctrl+F in WebKit, so we let it through
+        return; // Don't preventDefault — let the browser handle C-s as find
       case 't':
         toggleTreePane();
         e.preventDefault(); return;
