@@ -933,6 +933,7 @@ fn main() -> io::Result<()> {
 
     let path = std::env::args().nth(1).map(PathBuf::from);
     let mut app = App::new(path);
+    app.refresh_toc_entries();
 
     // Set up terminal
     enable_raw_mode()?;
