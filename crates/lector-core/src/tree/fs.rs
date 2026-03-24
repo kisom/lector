@@ -48,9 +48,7 @@ fn populate_children(node: &mut TreeNode, dir: &Path) {
             .unwrap_or_default();
 
         if path.is_dir() {
-            let mut dir_node = TreeNode::directory(name, path.to_path_buf(), Vec::new());
-            // Eagerly populate one level deep so we know if dirs have children
-            populate_children(&mut dir_node, path);
+            let dir_node = TreeNode::directory(name, path.to_path_buf(), Vec::new());
             dirs.push(dir_node);
         } else {
             files.push(TreeNode::file(name, path.to_path_buf()));
@@ -60,6 +58,50 @@ fn populate_children(node: &mut TreeNode, dir: &Path) {
     // Directories first, then files (both sorted alphabetically by the walker)
     dirs.append(&mut files);
     *children = dirs;
+}
+
+/// Populate a directory node's children if they haven't been loaded yet.
+fn ensure_populated(node: &mut TreeNode) {
+    if let super::NodeKind::Directory { children, .. } = &node.kind {
+        if children.is_empty() {
+            let dir = node.path.clone();
+            populate_children(node, &dir);
+        }
+    }
+}
+
+/// Toggle a directory at the given path, lazily populating children when expanding.
+pub fn toggle_at_path_lazy(tree: &mut TreeNode, target: &Path) -> bool {
+    if tree.path == target {
+        tree.toggle_expanded();
+        if tree.is_expanded() {
+            ensure_populated(tree);
+        }
+        return true;
+    }
+    if let super::NodeKind::Directory { children, .. } = &mut tree.kind {
+        for child in children.iter_mut() {
+            if toggle_at_path_lazy(child, target) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Expand all directories along a path, lazily populating children as needed.
+pub fn expand_to_path_lazy(tree: &mut TreeNode, target: &Path) {
+    if target.starts_with(&tree.path) {
+        tree.set_expanded(true);
+        ensure_populated(tree);
+        if let Some(children) = tree.children_mut() {
+            for child in children.iter_mut() {
+                if target.starts_with(&child.path) {
+                    expand_to_path_lazy(child, target);
+                }
+            }
+        }
+    }
 }
 
 /// Find a README file in the given directory, checking common names in priority order.

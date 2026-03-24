@@ -63,7 +63,7 @@ impl App {
         };
 
         if let Some(ref p) = file_to_open {
-            tree::expand_to_path(&mut file_tree, p);
+            tree_fs::expand_to_path_lazy(&mut file_tree, p);
         }
 
         let (document, rendered_lines, toc_headings, current_file) = match file_to_open {
@@ -147,7 +147,7 @@ impl App {
                         self.tree_cursor = flat_idx;
                         let path = entry.node.path.clone();
                         if entry.node.is_dir() {
-                            self.file_tree.toggle_at_path(&path);
+                            tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
                         } else {
                             self.open_path(&path);
                         }
@@ -324,7 +324,7 @@ impl App {
                     if let Some(entry) = flat.get(self.tree_cursor) {
                         if entry.node.is_dir() && !entry.node.is_expanded() {
                             let path = entry.node.path.clone();
-                            self.file_tree.toggle_at_path(&path);
+                            tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
                         }
                     }
                 }
@@ -334,7 +334,7 @@ impl App {
                     if let Some(entry) = flat.get(self.tree_cursor) {
                         if entry.node.is_dir() && entry.node.is_expanded() {
                             let path = entry.node.path.clone();
-                            self.file_tree.toggle_at_path(&path);
+                            tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
                         }
                     }
                 }
@@ -348,7 +348,7 @@ impl App {
                 } else if let Some(entry) = flat.get(self.tree_cursor) {
                     let path = entry.node.path.clone();
                     if entry.node.is_dir() {
-                        self.file_tree.toggle_at_path(&path);
+                        tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
                     } else {
                         self.open_path(&path);
                     }

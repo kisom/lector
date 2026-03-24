@@ -75,7 +75,7 @@ fn get_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
 fn toggle_dir(path: String, state: tauri::State<'_, Mutex<AppState>>) {
     let mut state = state.lock().unwrap();
     let path = PathBuf::from(&path);
-    state.file_tree.toggle_at_path(&path);
+    tree_fs::toggle_at_path_lazy(&mut state.file_tree, &path);
 }
 
 #[tauri::command]
@@ -194,7 +194,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             .unwrap_or_else(|| file_path.clone());
         if new_root != state.file_tree.path {
             state.file_tree = tree_fs::scan_directory(&new_root);
-            tree::expand_to_path(&mut state.file_tree, &file_path);
+            tree_fs::expand_to_path_lazy(&mut state.file_tree, &file_path);
         }
 
         state.current_file = Some(file_path);
@@ -615,7 +615,7 @@ fn main() {
 
     let mut file_tree = tree_fs::scan_directory(&root);
     if let Some(ref p) = path {
-        tree::expand_to_path(&mut file_tree, p);
+        tree_fs::expand_to_path_lazy(&mut file_tree, p);
     }
 
     let initial_path = path
