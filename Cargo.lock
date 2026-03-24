@@ -2250,6 +2250,7 @@ version = "1.2.4"
 dependencies = [
  "comrak",
  "lector-core",
+ "libc",
  "open",
  "orgize",
  "rst_parser",

@@ -660,6 +660,24 @@ fn main() {
         return;
     }
 
+    // Detach from terminal unless --no-detach is passed
+    #[cfg(unix)]
+    if !std::env::args().any(|a| a == "--no-detach") {
+        unsafe {
+            let pid = libc::fork();
+            if pid < 0 {
+                eprintln!("fork failed");
+                std::process::exit(1);
+            }
+            if pid > 0 {
+                // Parent exits, child continues
+                std::process::exit(0);
+            }
+            // Child: create new session to fully detach
+            libc::setsid();
+        }
+    }
+
     let path = std::env::args().nth(1).map(PathBuf::from);
     let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
 
