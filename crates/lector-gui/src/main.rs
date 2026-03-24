@@ -590,7 +590,7 @@ fn render_to_html(doc: &Document) -> String {
             opts.extension.tasklist = true;
             opts.extension.footnotes = true;
             opts.extension.header_ids = Some("heading-".to_string());
-            opts.render.unsafe_ = true;
+            opts.render.r#unsafe = true;
             let content_html = markdown_to_html(content, &opts);
             format!("{meta_html}{content_html}")
         }

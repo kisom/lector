@@ -8,7 +8,7 @@ name = "lector"
 path = "src/main.rs"
 
 [dependencies]
-comrak = "0.37"
+comrak = "0.51"
 lector-core = { path = "../lector-core" }
 libc = "0.2"
 open = "5"

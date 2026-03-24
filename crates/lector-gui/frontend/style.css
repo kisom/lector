@@ -167,7 +167,9 @@ html, body {
   margin: 0.5em 0;
 }
 #viewer-content ul, #viewer-content ol { padding-left: 24px; margin: 0.5em 0; }
-#viewer-content li { margin: 0.2em 0; }
+#viewer-content li { margin: 0.2em 0; color: var(--fg); }
+#viewer-content li * { color: inherit; }
+#viewer-content input[type="checkbox"] { margin-right: 0.4em; }
 #viewer-content table { border-collapse: collapse; margin: 0.5em 0; }
 #viewer-content th, #viewer-content td { border: 1px solid var(--border); padding: 6px 12px; }
 #viewer-content th { background: var(--bg-header); }
