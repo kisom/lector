@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
 
@@ -60,6 +60,18 @@ fn populate_children(node: &mut TreeNode, dir: &Path) {
     // Directories first, then files (both sorted alphabetically by the walker)
     dirs.append(&mut files);
     *children = dirs;
+}
+
+/// Find a README file in the given directory, checking common names in priority order.
+pub fn find_readme(dir: &Path) -> Option<PathBuf> {
+    const NAMES: &[&str] = &[
+        "README.md",
+        "README.org",
+        "README.rst",
+        "README.txt",
+        "README",
+    ];
+    NAMES.iter().map(|n| dir.join(n)).find(|p| p.is_file())
 }
 
 /// Check if a path is a document file we can render.

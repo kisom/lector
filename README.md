@@ -12,7 +12,11 @@ Lector provides a two-pane interface — a file tree browser on the left and a r
 - **Emacs keybindings**: C-n/C-p, C-v/M-v, C-f/C-b, chords (C-x C-f, C-x C-c), ESC-as-Meta
 - **Themes**: Nord (dark), eink (high-contrast), Tufte (serif typography) — cycle with M-t
 - **Text selection**: Native in both GUI (browser) and TUI (C-t hides tree for clean selection)
-- **Search**: Browser-native Ctrl+F in GUI
+- **Search**: Incremental search (C-s) in GUI
+- **Table of contents**: ToC sidebar extracted from document headings (C-x C-t), with side or replace-tree modes (C-x C-m)
+- **File browser**: Visual directory browser (C-o) and path input with tab completion (C-x C-f)
+- **Link handling**: Local file links open in lector, external URLs open in default browser
+- **Pelican metadata**: Markdown files with Pelican-style headers rendered as a styled metadata block
 - **Position memory**: Scroll position saved per file in SQLite, restored on reopen
 - **Gitignore-aware tree**: Respects `.gitignore` rules when scanning directories
 
@@ -81,12 +85,18 @@ clector DESIGN.md         # TUI with a file open
 | `Tab` | Toggle focus between tree and viewer |
 | `Enter` | Open file / toggle directory (tree) |
 | `C-w` | Close current file |
-| `C-x C-f` | Change working directory |
+| `C-r` | Reload file (viewer) / refresh tree (tree) |
+| `C-s` | Search in document |
+| `C-x C-f` | Open file or directory (Tab to complete) |
+| `C-o` | Visual file browser |
 | `C-t` | Toggle tree pane |
+| `C-x C-t` | Toggle table of contents |
+| `C-x C-m` | Cycle ToC mode (side / replace tree / auto) |
 | `C-=` / `C--` | Increase / decrease font size |
 | `C-0` | Reset font size |
 | `M-t` | Cycle theme (Nord / eink / Tufte) |
 | `C-h` | Toggle help overlay |
+| `C-g` | Cancel (alternative to Escape) |
 | `q` / `C-x C-c` | Quit |
 | `Escape` | Dismiss dialog, cancel chord, or ESC-as-Meta prefix |
 
@@ -101,6 +111,7 @@ Stored at `~/.config/lector/config.toml` (XDG). Created automatically with defau
 tree_position = "left"    # "left" or "right"
 tree_width_ratio = 0.25
 theme = "nord"            # "nord", "eink", or "tufte"
+toc_replace = false       # true = ToC always replaces tree pane
 
 [font]
 size = 16.0
@@ -112,9 +123,9 @@ Scroll positions are stored at `~/.local/share/lector/positions.db`.
 
 | Format | Extensions | GUI | TUI |
 |--------|-----------|-----|-----|
-| Markdown | `.md`, `.markdown`, `.mkd`, `.mdx` | Full HTML rendering | Styled terminal text |
-| Org-mode | `.org` | Full HTML rendering | Plain text (planned) |
-| reStructuredText | `.rst`, `.rest` | Full HTML rendering | Plain text (planned) |
+| Markdown | `.md`, `.markdown`, `.mkd`, `.mdx` | Full HTML rendering + Pelican metadata | Styled terminal text |
+| Org-mode | `.org` | Full HTML rendering | Styled terminal text |
+| reStructuredText | `.rst`, `.rest` | Full HTML rendering | Styled terminal text |
 | Other | any | `<pre>` display | Plain text |
 
 ## Architecture
@@ -127,7 +138,7 @@ crates/
   lector-tui/    ratatui + crossterm terminal interface
 ```
 
-The GUI renders documents to HTML on the Rust side (comrak for markdown, orgize for org-mode, rst_renderer for RST) and displays them in a system webview. The TUI walks the pulldown-cmark AST to produce styled terminal text. Both share all core logic.
+The GUI renders documents to HTML on the Rust side (comrak for markdown, orgize for org-mode, rst_renderer for RST) and displays them in a system webview. The TUI renders markdown via pulldown-cmark AST walking, and org-mode/RST via HTML conversion then a shared HTML-to-styled-text renderer. Both share all core logic.
 
 See [DESIGN.md](DESIGN.md) for detailed architecture and technology rationale.
 

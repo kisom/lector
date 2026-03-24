@@ -106,3 +106,43 @@ pub struct FlatEntry<'a> {
     pub node: &'a TreeNode,
     pub depth: usize,
 }
+
+/// Expand all directories along the path to a target file.
+pub fn expand_to_path(tree: &mut TreeNode, target: &std::path::Path) {
+    if target.starts_with(&tree.path) {
+        tree.set_expanded(true);
+        if let Some(children) = tree.children_mut() {
+            for child in children.iter_mut() {
+                if target.starts_with(&child.path) {
+                    expand_to_path(child, target);
+                }
+            }
+        }
+    }
+}
+
+/// Find the flat index of a path in the tree.
+pub fn find_cursor_for_path(tree: &TreeNode, target: &std::path::Path) -> Option<usize> {
+    tree.flatten(0)
+        .iter()
+        .position(|entry| entry.node.path == target)
+}
+
+/// Resolve the root directory for viewing.
+/// Tries git root first, then falls back to the path's parent or cwd.
+pub fn resolve_root(path: Option<&std::path::Path>) -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    path.and_then(|p| {
+        git::find_git_root(p).or_else(|| {
+            if p.is_dir() {
+                Some(p.to_path_buf())
+            } else {
+                p.parent()
+                    .filter(|d| !d.as_os_str().is_empty())
+                    .map(|d| d.to_path_buf())
+            }
+        })
+    })
+    .or_else(|| git::find_git_root(&cwd).or(Some(cwd)))
+    .unwrap_or_else(|| std::path::PathBuf::from("."))
+}

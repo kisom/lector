@@ -5,10 +5,10 @@ use std::sync::Mutex;
 
 use comrak::{markdown_to_html, Options};
 use serde::Serialize;
-use lector_core::document::{Document, Format};
+use lector_core::document::{markdown, Document, Format};
 use lector_core::state::config::Config;
 use lector_core::state::position::PositionStore;
-use lector_core::tree::{fs as tree_fs, git, TreeNode};
+use lector_core::tree::{self, fs as tree_fs, git, TreeNode};
 
 /// Application state shared across Tauri commands.
 struct AppState {
@@ -157,7 +157,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
         state.file_tree = tree_fs::scan_directory(&root);
 
         // Look for a README in the root
-        let readme = find_readme(&root);
+        let readme = tree_fs::find_readme(&root);
         if let Some(readme_path) = readme {
             let doc = Document::load(&readme_path).map_err(|e| e.to_string())?;
             let html = render_to_html(&doc);
@@ -192,7 +192,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             .unwrap_or_else(|| file_path.clone());
         if new_root != state.file_tree.path {
             state.file_tree = tree_fs::scan_directory(&new_root);
-            expand_to_path(&mut state.file_tree, &file_path);
+            tree::expand_to_path(&mut state.file_tree, &file_path);
         }
 
         state.current_file = Some(file_path);
@@ -480,7 +480,7 @@ fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option
 fn render_to_html(doc: &Document) -> String {
     match doc.format {
         Format::Markdown => {
-            let (meta, content) = extract_markdown_metadata(&doc.source);
+            let (meta, content) = markdown::extract_metadata(&doc.source);
             let meta_html = metadata_to_html(&meta);
 
             let mut opts = Options::default();
@@ -521,66 +521,11 @@ fn html_pre(source: &str) -> String {
     format!("<pre><code>{}</code></pre>", html_escape(source))
 }
 
-fn find_readme(dir: &std::path::Path) -> Option<PathBuf> {
-    const NAMES: &[&str] = &[
-        "README.md",
-        "README.org",
-        "README.rst",
-        "README.txt",
-        "README",
-    ];
-    NAMES.iter().map(|n| dir.join(n)).find(|p| p.is_file())
-}
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-/// Extract Pelican-style metadata from the top of a Markdown file.
-/// Returns (metadata key-value pairs, remaining content).
-/// Metadata format: `Key: value` lines at the start, ending at first blank line.
-fn extract_markdown_metadata(source: &str) -> (Vec<(String, String)>, &str) {
-    let mut meta = Vec::new();
-    let mut end = 0;
-
-    for line in source.lines() {
-        if line.is_empty() {
-            // Blank line terminates metadata
-            end += line.len() + 1; // +1 for newline
-            break;
-        }
-
-        // Match "Key: value" where Key is alphabetic/dash/underscore
-        if let Some(colon_pos) = line.find(": ") {
-            let key = &line[..colon_pos];
-            if !key.is_empty()
-                && key
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            {
-                let value = line[colon_pos + 2..].trim();
-                meta.push((key.to_string(), value.to_string()));
-                end += line.len() + 1;
-                continue;
-            }
-        }
-
-        // Not a metadata line — no metadata in this file
-        return (Vec::new(), source);
-    }
-
-    if meta.is_empty() {
-        (Vec::new(), source)
-    } else {
-        let content = if end < source.len() {
-            &source[end..]
-        } else {
-            ""
-        };
-        (meta, content)
-    }
 }
 
 /// Render metadata key-value pairs as a styled HTML block.
@@ -620,32 +565,16 @@ fn main() {
     let config = Config::load();
     let positions = PositionStore::open().ok();
 
-    // Determine root directory
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root = path
-        .as_ref()
-        .and_then(|p| {
-            git::find_git_root(p).or_else(|| {
-                if p.is_dir() {
-                    Some(p.clone())
-                } else {
-                    p.parent()
-                        .filter(|d| !d.as_os_str().is_empty())
-                        .map(|d| d.to_path_buf())
-                }
-            })
-        })
-        .or_else(|| git::find_git_root(&cwd).or(Some(cwd)))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let root = tree::resolve_root(path.as_deref());
 
     let mut file_tree = tree_fs::scan_directory(&root);
     if let Some(ref p) = path {
-        expand_to_path(&mut file_tree, p);
+        tree::expand_to_path(&mut file_tree, p);
     }
 
     let initial_path = path
         .filter(|p| p.is_file())
-        .or_else(|| find_readme(&root));
+        .or_else(|| tree_fs::find_readme(&root));
 
     let app_state = AppState {
         config,
@@ -681,15 +610,3 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-fn expand_to_path(tree: &mut TreeNode, target: &std::path::Path) {
-    if target.starts_with(&tree.path) {
-        tree.set_expanded(true);
-        if let Some(children) = tree.children_mut() {
-            for child in children.iter_mut() {
-                if target.starts_with(&child.path) {
-                    expand_to_path(child, target);
-                }
-            }
-        }
-    }
-}

@@ -2,8 +2,15 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+/// A heading extracted during rendering, with its position in the output lines.
+pub struct TocHeading {
+    pub level: u8,
+    pub text: String,
+    pub line_index: usize,
+}
+
 /// Render markdown source into ratatui Lines with styling.
-pub fn render_markdown(source: &str) -> Vec<Line<'static>> {
+pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -16,6 +23,8 @@ pub fn render_markdown(source: &str) -> Vec<Line<'static>> {
     let mut in_code_block = false;
     let mut list_depth: usize = 0;
     let mut ordered_index: Option<u64> = None;
+    let mut headings: Vec<TocHeading> = Vec::new();
+    let mut current_heading: Option<(u8, String)> = None;
 
     for event in parser {
         match event {
@@ -24,6 +33,15 @@ pub fn render_markdown(source: &str) -> Vec<Line<'static>> {
                     flush_line(&mut lines, &mut current_spans);
                     // Blank line before heading
                     lines.push(Line::default());
+                    let lvl = match level {
+                        HeadingLevel::H1 => 1,
+                        HeadingLevel::H2 => 2,
+                        HeadingLevel::H3 => 3,
+                        HeadingLevel::H4 => 4,
+                        HeadingLevel::H5 => 5,
+                        HeadingLevel::H6 => 6,
+                    };
+                    current_heading = Some((lvl, String::new()));
                     let style = heading_style(level);
                     style_stack.push(style);
                 }
@@ -84,6 +102,11 @@ pub fn render_markdown(source: &str) -> Vec<Line<'static>> {
             },
             Event::End(tag_end) => match tag_end {
                 TagEnd::Heading(_) => {
+                    if let Some((lvl, text)) = current_heading.take() {
+                        // The heading line is the one about to be flushed
+                        let line_index = lines.len(); // will be the index after flush
+                        headings.push(TocHeading { level: lvl, text, line_index });
+                    }
                     flush_line(&mut lines, &mut current_spans);
                     style_stack.pop();
                 }
@@ -116,6 +139,9 @@ pub fn render_markdown(source: &str) -> Vec<Line<'static>> {
                 _ => {}
             },
             Event::Text(text) => {
+                if let Some((_, ref mut heading_text)) = current_heading {
+                    heading_text.push_str(&text);
+                }
                 let style = current_style(&style_stack);
                 if in_code_block {
                     // Code blocks: render each line separately
@@ -155,11 +181,11 @@ pub fn render_markdown(source: &str) -> Vec<Line<'static>> {
     }
 
     flush_line(&mut lines, &mut current_spans);
-    lines
+    (lines, headings)
 }
 
 /// Render org-mode source into ratatui Lines.
-pub fn render_org(source: &str) -> Vec<Line<'static>> {
+pub fn render_org(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     let org = orgize::Org::parse(source);
     let mut buf = Vec::new();
     match org.write_html(&mut buf) {
@@ -167,12 +193,12 @@ pub fn render_org(source: &str) -> Vec<Line<'static>> {
             let html = String::from_utf8(buf).unwrap_or_else(|_| source.to_string());
             render_html_to_lines(&html)
         }
-        Err(_) => source.lines().map(|l| Line::raw(l.to_string())).collect(),
+        Err(_) => (source.lines().map(|l| Line::raw(l.to_string())).collect(), Vec::new()),
     }
 }
 
 /// Render reStructuredText source into ratatui Lines.
-pub fn render_rst(source: &str) -> Vec<Line<'static>> {
+pub fn render_rst(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     match rst_parser::parse(source) {
         Ok(document) => {
             let mut buf = Vec::new();
@@ -181,16 +207,16 @@ pub fn render_rst(source: &str) -> Vec<Line<'static>> {
                     let html = String::from_utf8(buf).unwrap_or_else(|_| source.to_string());
                     render_html_to_lines(&html)
                 }
-                Err(_) => source.lines().map(|l| Line::raw(l.to_string())).collect(),
+                Err(_) => (source.lines().map(|l| Line::raw(l.to_string())).collect(), Vec::new()),
             }
         }
-        Err(_) => source.lines().map(|l| Line::raw(l.to_string())).collect(),
+        Err(_) => (source.lines().map(|l| Line::raw(l.to_string())).collect(), Vec::new()),
     }
 }
 
 /// Convert simple HTML to styled ratatui Lines.
 /// Handles common tags: h1-h6, p, strong, em, code, pre, a, ul, ol, li, blockquote, hr.
-fn render_html_to_lines(html: &str) -> Vec<Line<'static>> {
+fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut style_stack: Vec<Style> = vec![Style::default()];
@@ -198,6 +224,8 @@ fn render_html_to_lines(html: &str) -> Vec<Line<'static>> {
     let mut list_depth: usize = 0;
     let mut ordered_idx: Option<u64> = None;
     let mut skip_content = false;
+    let mut headings: Vec<TocHeading> = Vec::new();
+    let mut current_heading: Option<(u8, String)> = None;
 
     let mut pos = 0;
     let bytes = html.as_bytes();
@@ -224,6 +252,10 @@ fn render_html_to_lines(html: &str) -> Vec<Line<'static>> {
             if is_close {
                 match tag_name {
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                        if let Some((lvl, text)) = current_heading.take() {
+                            let line_index = lines.len();
+                            headings.push(TocHeading { level: lvl, text, line_index });
+                        }
                         flush_line(&mut lines, &mut spans);
                         style_stack.pop();
                     }
@@ -263,21 +295,26 @@ fn render_html_to_lines(html: &str) -> Vec<Line<'static>> {
                     "h1" => {
                         flush_line(&mut lines, &mut spans);
                         lines.push(Line::default());
+                        current_heading = Some((1, String::new()));
                         style_stack.push(heading_style(HeadingLevel::H1));
                     }
                     "h2" => {
                         flush_line(&mut lines, &mut spans);
                         lines.push(Line::default());
+                        current_heading = Some((2, String::new()));
                         style_stack.push(heading_style(HeadingLevel::H2));
                     }
                     "h3" => {
                         flush_line(&mut lines, &mut spans);
                         lines.push(Line::default());
+                        current_heading = Some((3, String::new()));
                         style_stack.push(heading_style(HeadingLevel::H3));
                     }
                     "h4" | "h5" | "h6" => {
                         flush_line(&mut lines, &mut spans);
                         lines.push(Line::default());
+                        let lvl = tag_name.as_bytes().get(1).map(|b| b - b'0').unwrap_or(4);
+                        current_heading = Some((lvl, String::new()));
                         style_stack.push(heading_style(HeadingLevel::H4));
                     }
                     "p" | "div" => {
@@ -358,6 +395,9 @@ fn render_html_to_lines(html: &str) -> Vec<Line<'static>> {
             if !skip_content {
                 let text = &html[pos..text_end];
                 let decoded = decode_html_entities(text);
+                if let Some((_, ref mut heading_text)) = current_heading {
+                    heading_text.push_str(&decoded);
+                }
                 if in_pre {
                     for (i, line) in decoded.lines().enumerate() {
                         if i > 0 {
@@ -377,7 +417,7 @@ fn render_html_to_lines(html: &str) -> Vec<Line<'static>> {
     }
 
     flush_line(&mut lines, &mut spans);
-    lines
+    (lines, headings)
 }
 
 fn decode_html_entities(s: &str) -> String {

@@ -34,7 +34,8 @@ The GUI was initially built with iced (a native Rust GUI framework) but was rewr
 For the terminal UI (`clector` binary):
 - Dominant Rust TUI framework, actively maintained.
 - Shares `lector-core` with the GUI — same tree, nav, config, and persistence logic.
-- Renders markdown as styled terminal text (bold, italic, colored headings, code blocks).
+- Renders all three formats as styled terminal text (headings, bold, italic, code, links, lists, blockquotes).
+- Markdown uses pulldown-cmark AST walking directly. Org-mode and RST are rendered to HTML first (via orgize/rst_renderer), then converted to styled text through a shared HTML-to-lines renderer.
 - No mouse capture by default — terminal-native text selection works. C-t toggles the tree pane; when tree is visible, mouse capture is enabled for click-to-open.
 
 ## Architecture
@@ -75,9 +76,9 @@ The frontend is plain HTML/CSS/JS (no framework, no bundler):
 
 | Format | GUI (HTML) | TUI (styled text) |
 |--------|-----------|-------------------|
-| Markdown | `comrak::markdown_to_html()` | Walk pulldown-cmark AST → ratatui Spans |
-| Org-mode | `orgize::Org::write_html()` | (planned) |
-| RST | `rst_renderer` → HTML | (planned) |
+| Markdown | `comrak::markdown_to_html()` with Pelican metadata extraction | Walk pulldown-cmark AST → ratatui Spans |
+| Org-mode | `orgize::Org::write_html()` | orgize → HTML → styled text via HTML-to-lines renderer |
+| RST | `rst_parser` + `rst_renderer` → HTML | rst_parser/rst_renderer → HTML → styled text via HTML-to-lines renderer |
 | Other | `<pre><code>` wrapper | Plain text lines |
 
 ## Key Dependencies
@@ -86,6 +87,8 @@ The frontend is plain HTML/CSS/JS (no framework, no bundler):
 |-------|---------|---------|
 | `tauri` 2.x | GUI | Application framework (system webview) |
 | `comrak` | GUI | Markdown → HTML |
+| `orgize` | GUI, TUI | Org-mode → HTML |
+| `rst_parser` + `rst_renderer` | GUI, TUI | RST → HTML |
 | `pulldown-cmark` | Core, TUI | Markdown parsing (AST) |
 | `git2` (vendored) | Core | Git root detection |
 | `ignore` | Core | Gitignore-aware file tree walking |
@@ -108,4 +111,5 @@ SQLite (via `rusqlite`) in `$XDG_DATA_HOME/lector/positions.db` for file scroll 
 ## Planned Future Work
 
 - **File watching**: Auto-refresh when files change on disk (via `notify` crate).
-- **TUI org-mode/RST rendering**: Currently shown as plain text; styled rendering planned.
+- **TUI search**: Incremental search in the terminal viewer (GUI has C-s already).
+- **TUI file browser**: Visual file picker for the terminal (GUI has C-o already).

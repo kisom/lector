@@ -12,7 +12,14 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use lector_core::document::{Document, Format};
 use lector_core::nav::{Action, FocusedPane, KeyMapper, Modifiers};
 use lector_core::state::config::Config;
-use lector_core::tree::{fs as tree_fs, git, TreeNode};
+use lector_core::tree::{self, fs as tree_fs, TreeNode};
+
+#[derive(Clone, Copy, PartialEq)]
+enum TocMode {
+    Auto,
+    Side,
+    Replace,
+}
 
 struct App {
     config: Config,
@@ -29,8 +36,15 @@ struct App {
     scroll_offset: usize,
     tree_scroll: usize,
     tree_area: Rect,
+    toc_area: Rect,
+    term_width: u16,
     show_help: bool,
     show_tree: bool,
+    show_toc: bool,
+    toc_headings: Vec<render::TocHeading>,
+    toc_cursor: usize,
+    toc_scroll: usize,
+    toc_mode: TocMode,
     running: bool,
 }
 
@@ -39,40 +53,37 @@ impl App {
         let config = Config::load();
         let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
 
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let root = path
-            .as_ref()
-            .and_then(|p| {
-                git::find_git_root(p).or_else(|| {
-                    if p.is_dir() {
-                        Some(p.clone())
-                    } else {
-                        p.parent()
-                            .filter(|d| !d.as_os_str().is_empty())
-                            .map(|d| d.to_path_buf())
-                    }
-                })
-            })
-            .or_else(|| git::find_git_root(&cwd).or(Some(cwd)))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let root = tree::resolve_root(path.as_deref());
 
         let mut file_tree = tree_fs::scan_directory(&root);
-        if let Some(ref p) = path {
-            expand_to_path(&mut file_tree, p);
+
+        let file_to_open = match &path {
+            Some(p) if p.is_file() => Some(p.clone()),
+            _ => tree_fs::find_readme(&root),
+        };
+
+        if let Some(ref p) = file_to_open {
+            tree::expand_to_path(&mut file_tree, p);
         }
 
-        let (document, rendered_lines, current_file) = match path.filter(|p| p.is_file()) {
+        let (document, rendered_lines, toc_headings, current_file) = match file_to_open {
             Some(p) => {
-                let (doc, lines) = load_and_render(&p);
-                (Some(doc), lines, Some(p))
+                let (doc, lines, headings) = load_and_render(&p);
+                (Some(doc), lines, headings, Some(p))
             }
-            None => (None, Vec::new(), None),
+            None => (None, Vec::new(), Vec::new(), None),
         };
 
         let tree_cursor = if let Some(ref cf) = current_file {
-            find_cursor_for_path(&file_tree, cf).unwrap_or(0)
+            tree::find_cursor_for_path(&file_tree, cf).unwrap_or(0)
         } else {
             0
+        };
+
+        let toc_mode = if config.ui.toc_replace {
+            TocMode::Replace
+        } else {
+            TocMode::Auto
         };
 
         Self {
@@ -87,23 +98,46 @@ impl App {
             scroll_offset: 0,
             tree_scroll: 0,
             tree_area: Rect::default(),
+            toc_area: Rect::default(),
+            term_width: 80,
             show_help: false,
             show_tree: true,
+            show_toc: false,
+            toc_headings,
+            toc_cursor: 0,
+            toc_scroll: 0,
+            toc_mode,
             running: true,
         }
     }
 
+    fn has_any_sidebar(&self) -> bool {
+        self.show_tree || self.show_toc
+    }
+
+    fn update_mouse_capture(&self) {
+        if self.has_any_sidebar() {
+            let _ = execute!(io::stdout(), crossterm::event::EnableMouseCapture);
+        } else {
+            let _ = execute!(io::stdout(), crossterm::event::DisableMouseCapture);
+        }
+    }
+
+    fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
+        col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+    }
+
     fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
-        if !self.show_tree {
+        if !self.has_any_sidebar() {
             return;
         }
+
+        let in_tree = self.show_tree && Self::in_rect(column, row, self.tree_area);
+        let in_toc = self.show_toc && self.toc_area.width > 0 && Self::in_rect(column, row, self.toc_area);
+
         match kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if column >= self.tree_area.x
-                    && column < self.tree_area.x + self.tree_area.width
-                    && row >= self.tree_area.y
-                    && row < self.tree_area.y + self.tree_area.height
-                {
+                if in_tree {
                     self.focus = FocusedPane::Tree;
                     let clicked_row = (row - self.tree_area.y) as usize;
                     let flat_idx = self.tree_scroll + clicked_row;
@@ -118,21 +152,34 @@ impl App {
                             self.open_path(&path);
                         }
                     }
+                } else if in_toc {
+                    // +1 offset for the block border/title row
+                    let clicked_row = (row - self.toc_area.y).saturating_sub(1) as usize;
+                    let toc_idx = self.toc_scroll + clicked_row;
+                    if toc_idx < self.toc_headings.len() {
+                        self.toc_cursor = toc_idx;
+                        self.scroll_offset = self.toc_headings[toc_idx].line_index;
+                    }
                 } else {
                     self.focus = FocusedPane::Viewer;
                 }
             }
             MouseEventKind::ScrollUp => {
-                if column < self.tree_area.x + self.tree_area.width {
+                if in_tree {
                     self.tree_cursor = self.tree_cursor.saturating_sub(3);
+                } else if in_toc {
+                    self.toc_cursor = self.toc_cursor.saturating_sub(3);
                 } else {
                     self.scroll_offset = self.scroll_offset.saturating_sub(3);
                 }
             }
             MouseEventKind::ScrollDown => {
-                if column < self.tree_area.x + self.tree_area.width {
+                if in_tree {
                     let max = self.file_tree.flatten(0).len().saturating_sub(1);
                     self.tree_cursor = (self.tree_cursor + 3).min(max);
+                } else if in_toc {
+                    let max = self.toc_headings.len().saturating_sub(1);
+                    self.toc_cursor = (self.toc_cursor + 3).min(max);
                 } else {
                     self.scroll_offset = (self.scroll_offset + 3)
                         .min(self.rendered_lines.len().saturating_sub(1));
@@ -194,9 +241,10 @@ impl App {
                 } else if let Some(ref path) = self.current_file {
                     // Reload document
                     let path = path.clone();
-                    let (doc, lines) = load_and_render(&path);
+                    let (doc, lines, headings) = load_and_render(&path);
                     self.document = Some(doc);
                     self.rendered_lines = lines;
+                    self.toc_headings = headings;
                 }
             }
             Action::Search => {
@@ -207,18 +255,28 @@ impl App {
             }
             Action::ToggleTree => {
                 self.show_tree = !self.show_tree;
-                if self.show_tree {
-                    let _ = execute!(io::stdout(), crossterm::event::EnableMouseCapture);
-                } else {
-                    let _ = execute!(io::stdout(), crossterm::event::DisableMouseCapture);
-                }
+                self.update_mouse_capture();
             }
             Action::Quit => self.running = false,
             Action::OpenPath | Action::OpenBrowser => {
                 // TUI open path/browser not implemented yet
             }
-            Action::ToggleToc | Action::CycleTocMode => {
-                // TUI ToC not implemented yet
+            Action::ToggleToc => {
+                self.show_toc = !self.show_toc;
+                if self.show_toc {
+                    self.toc_cursor = 0;
+                    self.toc_scroll = 0;
+                } else {
+                    self.toc_area = Rect::default();
+                }
+                self.update_mouse_capture();
+            }
+            Action::CycleTocMode => {
+                self.toc_mode = match self.toc_mode {
+                    TocMode::Auto => TocMode::Side,
+                    TocMode::Side => TocMode::Replace,
+                    TocMode::Replace => TocMode::Auto,
+                };
             }
             Action::FontSizeIncrease | Action::FontSizeDecrease | Action::FontSizeReset => {
                 // Font size not applicable in TUI
@@ -243,33 +301,48 @@ impl App {
                 self.scroll_offset = self.rendered_lines.len().saturating_sub(1);
             }
             Action::TreeNext => {
-                if self.tree_cursor + 1 < flat_len {
+                if self.toc_has_focus() {
+                    if self.toc_cursor + 1 < self.toc_headings.len() {
+                        self.toc_cursor += 1;
+                    }
+                } else if self.tree_cursor + 1 < flat_len {
                     self.tree_cursor += 1;
                 }
             }
             Action::TreePrev => {
-                if self.tree_cursor > 0 {
+                if self.toc_has_focus() {
+                    self.toc_cursor = self.toc_cursor.saturating_sub(1);
+                } else if self.tree_cursor > 0 {
                     self.tree_cursor -= 1;
                 }
             }
             Action::TreeExpand => {
-                if let Some(entry) = flat.get(self.tree_cursor) {
-                    if entry.node.is_dir() && !entry.node.is_expanded() {
-                        let path = entry.node.path.clone();
-                        self.file_tree.toggle_at_path(&path);
+                if !self.toc_has_focus() {
+                    if let Some(entry) = flat.get(self.tree_cursor) {
+                        if entry.node.is_dir() && !entry.node.is_expanded() {
+                            let path = entry.node.path.clone();
+                            self.file_tree.toggle_at_path(&path);
+                        }
                     }
                 }
             }
             Action::TreeCollapse => {
-                if let Some(entry) = flat.get(self.tree_cursor) {
-                    if entry.node.is_dir() && entry.node.is_expanded() {
-                        let path = entry.node.path.clone();
-                        self.file_tree.toggle_at_path(&path);
+                if !self.toc_has_focus() {
+                    if let Some(entry) = flat.get(self.tree_cursor) {
+                        if entry.node.is_dir() && entry.node.is_expanded() {
+                            let path = entry.node.path.clone();
+                            self.file_tree.toggle_at_path(&path);
+                        }
                     }
                 }
             }
             Action::TreeSelect => {
-                if let Some(entry) = flat.get(self.tree_cursor) {
+                if self.toc_has_focus() {
+                    // Jump viewer to selected heading
+                    if let Some(heading) = self.toc_headings.get(self.toc_cursor) {
+                        self.scroll_offset = heading.line_index;
+                    }
+                } else if let Some(entry) = flat.get(self.tree_cursor) {
                     let path = entry.node.path.clone();
                     if entry.node.is_dir() {
                         self.file_tree.toggle_at_path(&path);
@@ -283,44 +356,98 @@ impl App {
 
     fn open_path(&mut self, path: &std::path::Path) {
         if path.is_file() {
-            let (doc, lines) = load_and_render(path);
+            let (doc, lines, headings) = load_and_render(path);
             self.document = Some(doc);
             self.rendered_lines = lines;
+            self.toc_headings = headings;
+            self.toc_cursor = 0;
+            self.toc_scroll = 0;
             self.current_file = Some(path.to_path_buf());
             self.scroll_offset = 0;
             self.focus = FocusedPane::Viewer;
 
-            if let Some(idx) = find_cursor_for_path(&self.file_tree, path) {
+            if let Some(idx) = tree::find_cursor_for_path(&self.file_tree, path) {
                 self.tree_cursor = idx;
             }
         }
     }
 
+    /// ToC has focus when it's visible in replace mode and Tree pane is focused.
+    fn toc_has_focus(&self) -> bool {
+        self.show_toc
+            && self.focus == FocusedPane::Tree
+            && self.resolve_toc_replace(self.term_width)
+    }
+
+    fn resolve_toc_replace(&self, total_width: u16) -> bool {
+        match self.toc_mode {
+            TocMode::Replace => true,
+            TocMode::Side => false,
+            TocMode::Auto => total_width < 120,
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        self.term_width = area.width;
 
         if self.show_help {
             self.draw_help(frame, area);
             return;
         }
 
-        if self.show_tree {
-            let tree_on_left = self.config.ui.tree_position != "right";
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
-                .split(area);
+        let toc_replace = self.resolve_toc_replace(area.width);
+        let show_tree_pane = self.show_tree && !(self.show_toc && toc_replace);
+        let show_toc_pane = self.show_toc;
+        let tree_on_left = self.config.ui.tree_position != "right";
 
-            let (tree_area, viewer_area) = if tree_on_left {
-                (chunks[0], chunks[1])
-            } else {
-                (chunks[1], chunks[0])
-            };
+        // Build layout constraints based on visible panes
+        let mut constraints: Vec<Constraint> = Vec::new();
+        let mut pane_order: Vec<&str> = Vec::new(); // track what goes where
 
-            self.draw_tree(frame, tree_area);
-            self.draw_viewer(frame, viewer_area);
-        } else {
-            self.draw_viewer(frame, area);
+        if show_tree_pane {
+            constraints.push(Constraint::Percentage(25));
+            pane_order.push("tree");
+        }
+
+        // Viewer always present
+        constraints.push(Constraint::Min(20));
+        pane_order.push("viewer");
+
+        if show_toc_pane && !toc_replace {
+            // Side mode: ToC as third column
+            constraints.push(Constraint::Percentage(20));
+            pane_order.push("toc");
+        } else if show_toc_pane && toc_replace {
+            // Replace mode: ToC takes tree's spot (already excluded tree above)
+            constraints.insert(0, Constraint::Percentage(25));
+            pane_order.insert(0, "toc");
+        }
+
+        // Handle tree-on-right by swapping tree and viewer positions
+        if !tree_on_left && show_tree_pane {
+            // Find tree and viewer indices and swap them
+            if let (Some(t), Some(v)) = (
+                pane_order.iter().position(|&p| p == "tree"),
+                pane_order.iter().position(|&p| p == "viewer"),
+            ) {
+                pane_order.swap(t, v);
+                constraints.swap(t, v);
+            }
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(constraints)
+            .split(area);
+
+        for (i, &pane) in pane_order.iter().enumerate() {
+            match pane {
+                "tree" => self.draw_tree(frame, chunks[i]),
+                "viewer" => self.draw_viewer(frame, chunks[i]),
+                "toc" => self.draw_toc(frame, chunks[i]),
+                _ => {}
+            }
         }
     }
 
@@ -440,6 +567,65 @@ impl App {
         frame.render_widget(doc, chunks[1]);
     }
 
+    fn draw_toc(&mut self, frame: &mut Frame, area: Rect) {
+        self.toc_area = area;
+        if self.toc_headings.is_empty() {
+            let msg = Paragraph::new("No headings")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(
+                    Block::default()
+                        .borders(Borders::RIGHT)
+                        .border_style(Style::default().fg(Color::DarkGray))
+                        .title(" ToC "),
+                );
+            frame.render_widget(msg, area);
+            return;
+        }
+
+        let items: Vec<ListItem> = self
+            .toc_headings
+            .iter()
+            .enumerate()
+            .map(|(idx, h)| {
+                let indent = "  ".repeat(h.level.saturating_sub(1) as usize);
+                let is_selected = idx == self.toc_cursor;
+                let style = if is_selected {
+                    Style::default().bg(Color::DarkGray).fg(Color::White)
+                } else {
+                    match h.level {
+                        1 => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        2 => Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                        3 => Style::default().fg(Color::Magenta),
+                        _ => Style::default().fg(Color::White),
+                    }
+                };
+                ListItem::new(format!("{indent}{}", h.text)).style(style)
+            })
+            .collect();
+
+        // Scroll to keep cursor visible
+        let visible_height = area.height.saturating_sub(2) as usize; // account for border
+        if self.toc_cursor >= self.toc_scroll + visible_height {
+            self.toc_scroll = self.toc_cursor - visible_height + 1;
+        } else if self.toc_cursor < self.toc_scroll {
+            self.toc_scroll = self.toc_cursor;
+        }
+
+        let visible_items: Vec<ListItem> = items
+            .into_iter()
+            .skip(self.toc_scroll)
+            .collect();
+
+        let list = List::new(visible_items).block(
+            Block::default()
+                .borders(Borders::RIGHT)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" ToC "),
+        );
+
+        frame.render_widget(list, area);
+    }
+
     fn draw_help(&self, frame: &mut Frame, area: Rect) {
         let bindings = [
             ("C-n / C-p", "Scroll / tree cursor"),
@@ -451,6 +637,8 @@ impl App {
             ("C-w", "Close file"),
             ("C-r", "Reload / refresh tree"),
             ("C-s", "Search (GUI only)"),
+            ("C-x C-t", "Toggle table of contents"),
+            ("C-x C-m", "Cycle ToC mode"),
             ("C-t", "Toggle tree pane"),
             ("M-t", "Cycle theme"),
             ("C-h", "Toggle help"),
@@ -524,20 +712,22 @@ fn translate_key(key: KeyEvent) -> (String, Modifiers) {
     (key_str, mods)
 }
 
-fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>) {
+fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>, Vec<render::TocHeading>) {
     match Document::load(path) {
         Ok(doc) => {
-            let lines = match doc.format {
+            let (lines, headings) = match doc.format {
                 Format::Markdown => render::render_markdown(&doc.source),
                 Format::OrgMode => render::render_org(&doc.source),
                 Format::ReStructuredText => render::render_rst(&doc.source),
-                Format::Plain => doc
-                    .source
-                    .lines()
-                    .map(|l| Line::raw(l.to_string()))
-                    .collect(),
+                Format::Plain => (
+                    doc.source
+                        .lines()
+                        .map(|l| Line::raw(l.to_string()))
+                        .collect(),
+                    Vec::new(),
+                ),
             };
-            (doc, lines)
+            (doc, lines, headings)
         }
         Err(e) => {
             let doc = Document {
@@ -548,29 +738,11 @@ fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>) {
                 format!("Error loading file: {e}"),
                 Style::default().fg(Color::Red),
             )];
-            (doc, lines)
+            (doc, lines, Vec::new())
         }
     }
 }
 
-fn expand_to_path(tree: &mut TreeNode, target: &std::path::Path) {
-    if target.starts_with(&tree.path) {
-        tree.set_expanded(true);
-        if let Some(children) = tree.children_mut() {
-            for child in children.iter_mut() {
-                if target.starts_with(&child.path) {
-                    expand_to_path(child, target);
-                }
-            }
-        }
-    }
-}
-
-fn find_cursor_for_path(tree: &TreeNode, target: &std::path::Path) -> Option<usize> {
-    tree.flatten(0)
-        .iter()
-        .position(|entry| entry.node.path == target)
-}
 
 fn main() -> io::Result<()> {
     if std::env::args().any(|a| a == "--version" || a == "-V") {
