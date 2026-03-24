@@ -1,8 +1,13 @@
 # Lector
 
-A read-only document viewer for markdown, reStructuredText, and org-mode files.
+A read-only document viewer for markdown, reStructuredText, and org-mode
+files. One of the primary motivations was reviewing architecture,
+design, and planning docs when working with a claude-core coding agent.
 
-Lector provides a two-pane interface — a file tree browser on the left and a rendered document viewer on the right — with emacs-style keyboard navigation, git-aware directory detection, and session memory (scroll positions persist across restarts).
+Lector provides a two-pane interface — a file tree browser on the left
+and a rendered document viewer on the right — with emacs-style
+keyboard navigation, git-aware directory detection, and session memory
+(scroll positions persist across restarts).
 
 ## Features
 
@@ -18,6 +23,7 @@ Lector provides a two-pane interface — a file tree browser on the left and a r
 - **Link handling**: Local file links open in lector, external URLs open in default browser
 - **Pelican metadata**: Markdown files with Pelican-style headers rendered as a styled metadata block
 - **Position memory**: Scroll position saved per file in SQLite, restored on reopen
+- **File watching**: Tree auto-refreshes when files change on disk (only watches expanded directories)
 - **Gitignore-aware tree**: Respects `.gitignore` rules when scanning directories
 
 ## Install
