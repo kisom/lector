@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use lector_core::document::{Document, Format};
 use lector_core::nav::{Action, FocusedPane, KeyMapper, Modifiers};
 use lector_core::state::config::Config;
-use lector_core::tree::{self, fs as tree_fs, TreeNode};
+use lector_core::tree::{self, fs as tree_fs, watch as tree_watch, TreeNode};
 
 #[derive(Clone, Copy, PartialEq)]
 enum TocMode {
@@ -38,6 +38,7 @@ struct App {
     tree_area: Rect,
     toc_area: Rect,
     term_width: u16,
+    viewer_height: usize,
     show_help: bool,
     show_tree: bool,
     show_toc: bool,
@@ -45,6 +46,8 @@ struct App {
     toc_cursor: usize,
     toc_scroll: usize,
     toc_mode: TocMode,
+    watcher_handle: Option<tree_watch::WatcherHandle>,
+    watcher_rx: Option<std::sync::mpsc::Receiver<notify::Result<notify::Event>>>,
     running: bool,
 }
 
@@ -86,6 +89,13 @@ impl App {
             TocMode::Auto
         };
 
+        let (watcher_handle, watcher_rx) = tree_watch::create_watcher()
+            .map(|(mut handle, rx)| {
+                tree_fs::sync_watcher(&file_tree, &mut handle);
+                (Some(handle), Some(rx))
+            })
+            .unwrap_or((None, None));
+
         Self {
             config,
             key_mapper: KeyMapper::new(),
@@ -100,6 +110,7 @@ impl App {
             tree_area: Rect::default(),
             toc_area: Rect::default(),
             term_width: 80,
+            viewer_height: 24,
             show_help: false,
             show_tree: true,
             show_toc: false,
@@ -107,7 +118,20 @@ impl App {
             toc_cursor: 0,
             toc_scroll: 0,
             toc_mode,
+            watcher_handle,
+            watcher_rx,
             running: true,
+        }
+    }
+
+    /// Maximum scroll offset: content fits on screen → 0, otherwise allow
+    /// scrolling until the last line is at the bottom with one blank line.
+    fn max_scroll(&self) -> usize {
+        if self.rendered_lines.len() <= self.viewer_height {
+            0
+        } else {
+            // Allow scrolling to one line past content end
+            self.rendered_lines.len().saturating_sub(self.viewer_height) + 1
         }
     }
 
@@ -147,7 +171,7 @@ impl App {
                         self.tree_cursor = flat_idx;
                         let path = entry.node.path.clone();
                         if entry.node.is_dir() {
-                            tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
+                            self.toggle_dir(&path);
                         } else {
                             self.open_path(&path);
                         }
@@ -182,7 +206,7 @@ impl App {
                     self.toc_cursor = (self.toc_cursor + 3).min(max);
                 } else {
                     self.scroll_offset = (self.scroll_offset + 3)
-                        .min(self.rendered_lines.len().saturating_sub(1));
+                        .min(self.max_scroll());
                 }
             }
             _ => {}
@@ -225,7 +249,13 @@ impl App {
         let flat_len = flat.len();
 
         match action {
-            Action::ToggleFocus => self.focus.toggle(),
+            Action::ToggleFocus => {
+                let mut visible = Vec::new();
+                if self.show_tree { visible.push(FocusedPane::Tree); }
+                visible.push(FocusedPane::Viewer);
+                if self.show_toc { visible.push(FocusedPane::Toc); }
+                self.focus.cycle(&visible);
+            }
             Action::CloseFile => {
                 self.document = None;
                 self.rendered_lines.clear();
@@ -238,6 +268,7 @@ impl App {
                     // Refresh tree
                     let root = self.file_tree.path.clone();
                     self.file_tree = tree_fs::scan_directory(&root);
+                    self.resync_watcher();
                 } else if let Some(ref path) = self.current_file {
                     // Reload document
                     let path = path.clone();
@@ -264,6 +295,23 @@ impl App {
             Action::Annotate | Action::ListAnnotations => {
                 // TUI annotations not implemented yet
             }
+            Action::TreeSetRoot => {
+                if let Some(entry) = flat.get(self.tree_cursor) {
+                    let dir = if entry.node.is_dir() {
+                        entry.node.path.clone()
+                    } else {
+                        entry.node.path.parent().unwrap_or(&entry.node.path).to_path_buf()
+                    };
+                    let root = lector_core::tree::git::find_git_root(&dir).unwrap_or(dir);
+                    self.file_tree = tree_fs::scan_directory(&root);
+                    self.tree_cursor = 0;
+                    if let Some(ref cf) = self.current_file {
+                        if cf.starts_with(&root) {
+                            tree_fs::expand_to_path_lazy(&mut self.file_tree, cf);
+                        }
+                    }
+                }
+            }
             Action::ToggleToc => {
                 self.show_toc = !self.show_toc;
                 if self.show_toc {
@@ -285,7 +333,8 @@ impl App {
                 // Font size not applicable in TUI
             }
             Action::ScrollDown => {
-                if self.scroll_offset + 1 < self.rendered_lines.len() {
+                let max = self.max_scroll();
+                if self.scroll_offset < max {
                     self.scroll_offset += 1;
                 }
             }
@@ -293,15 +342,15 @@ impl App {
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
             }
             Action::PageDown => {
-                self.scroll_offset = (self.scroll_offset + 20)
-                    .min(self.rendered_lines.len().saturating_sub(1));
+                let max = self.max_scroll();
+                self.scroll_offset = (self.scroll_offset + self.viewer_height).min(max);
             }
             Action::PageUp => {
-                self.scroll_offset = self.scroll_offset.saturating_sub(20);
+                self.scroll_offset = self.scroll_offset.saturating_sub(self.viewer_height);
             }
             Action::DocumentStart => self.scroll_offset = 0,
             Action::DocumentEnd => {
-                self.scroll_offset = self.rendered_lines.len().saturating_sub(1);
+                self.scroll_offset = self.max_scroll();
             }
             Action::TreeNext => {
                 if self.toc_has_focus() {
@@ -324,7 +373,7 @@ impl App {
                     if let Some(entry) = flat.get(self.tree_cursor) {
                         if entry.node.is_dir() && !entry.node.is_expanded() {
                             let path = entry.node.path.clone();
-                            tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
+                            self.toggle_dir(&path);
                         }
                     }
                 }
@@ -334,7 +383,7 @@ impl App {
                     if let Some(entry) = flat.get(self.tree_cursor) {
                         if entry.node.is_dir() && entry.node.is_expanded() {
                             let path = entry.node.path.clone();
-                            tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
+                            self.toggle_dir(&path);
                         }
                     }
                 }
@@ -348,12 +397,26 @@ impl App {
                 } else if let Some(entry) = flat.get(self.tree_cursor) {
                     let path = entry.node.path.clone();
                     if entry.node.is_dir() {
-                        tree_fs::toggle_at_path_lazy(&mut self.file_tree, &path);
+                        self.toggle_dir(&path);
                     } else {
                         self.open_path(&path);
                     }
                 }
             }
+        }
+    }
+
+    fn toggle_dir(&mut self, path: &std::path::Path) {
+        if let Some(ref mut handle) = self.watcher_handle {
+            tree_fs::toggle_at_path_watched(&mut self.file_tree, path, handle);
+        } else {
+            tree_fs::toggle_at_path_lazy(&mut self.file_tree, path);
+        }
+    }
+
+    fn resync_watcher(&mut self) {
+        if let Some(ref mut handle) = self.watcher_handle {
+            tree_fs::sync_watcher(&self.file_tree, handle);
         }
     }
 
@@ -520,7 +583,7 @@ impl App {
         frame.render_widget(list, area);
     }
 
-    fn draw_viewer(&self, frame: &mut Frame, area: Rect) {
+    fn draw_viewer(&mut self, frame: &mut Frame, area: Rect) {
         let is_focused = self.focus == FocusedPane::Viewer;
 
         if self.rendered_lines.is_empty() && self.document.is_none() {
@@ -548,6 +611,9 @@ impl App {
         let header = Paragraph::new(header_text)
             .style(Style::default().fg(Color::White).bg(Color::DarkGray));
         frame.render_widget(header, chunks[0]);
+
+        // Save viewer height for scroll clamping
+        self.viewer_height = chunks[1].height as usize;
 
         // Document content
         let border_style = if is_focused {
@@ -774,6 +840,14 @@ fn main() -> io::Result<()> {
                 Event::Key(key) => app.handle_key(key),
                 Event::Mouse(mouse) => app.handle_mouse(mouse.kind, mouse.column, mouse.row),
                 _ => {}
+            }
+        }
+
+        // Poll file watcher for tree updates
+        if let (Some(handle), Some(rx)) = (&app.watcher_handle, &app.watcher_rx) {
+            let changed = tree_watch::drain_events(rx, &handle.watched_dirs);
+            for dir in changed {
+                tree_fs::refresh_directory(&mut app.file_tree, &dir);
             }
         }
     }

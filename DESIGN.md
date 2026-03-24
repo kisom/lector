@@ -54,9 +54,9 @@ crates/
 ### Core Modules
 
 - **`document/`** — Format detection from file extension, document loading.
-- **`tree/`** — File tree data model. `fs.rs` scans directories using the `ignore` crate (respects .gitignore). `git.rs` detects git repository roots via `git2::Repository::discover()`. The tree supports expand/collapse, flatten-to-visible-list (for rendering), and path-based operations.
+- **`tree/`** — File tree data model. `fs.rs` scans directories using the `ignore` crate (respects .gitignore) with lazy child population. `git.rs` detects git repository roots by walking up the directory tree looking for `.git` (stops on access errors or filesystem root). `watch.rs` provides filesystem watching via the `notify` crate — only expanded directories are watched, and incremental refresh preserves expansion state. The tree supports expand/collapse, flatten-to-visible-list (for rendering), and path-based operations.
 - **`nav/`** — Navigation action enum, keybinding mapper with chord support (C-x C-f, C-x C-c). Maps (key, modifiers, focused_pane) → Action.
-- **`state/`** — Config persistence (TOML) and file position tracking (SQLite).
+- **`state/`** — Config persistence (TOML), file position tracking (SQLite), and text annotations (SQLite).
 
 ### GUI Architecture (Tauri 2)
 
@@ -92,7 +92,8 @@ The frontend is plain HTML/CSS/JS (no framework, no bundler):
 | `pulldown-cmark` | Core, TUI | Markdown parsing (AST) |
 | `git2` (vendored) | Core | Git root detection |
 | `ignore` | Core | Gitignore-aware file tree walking |
-| `rusqlite` (bundled) | Core | Position persistence |
+| `notify` 8.x | Core | Filesystem watching for tree auto-refresh |
+| `rusqlite` (bundled) | Core | Position and annotation persistence |
 | `ratatui` | TUI | Terminal UI framework |
 
 ## Themes
@@ -110,6 +111,5 @@ SQLite (via `rusqlite`) in `$XDG_DATA_HOME/lector/positions.db` for file scroll 
 
 ## Planned Future Work
 
-- **File watching**: Auto-refresh when files change on disk (via `notify` crate).
 - **TUI search**: Incremental search in the terminal viewer (GUI has C-s already).
 - **TUI file browser**: Visual file picker for the terminal (GUI has C-o already).

@@ -104,6 +104,112 @@ pub fn expand_to_path_lazy(tree: &mut TreeNode, target: &Path) {
     }
 }
 
+/// Find a mutable reference to a tree node by path.
+fn find_node_mut<'a>(node: &'a mut super::TreeNode, target: &Path) -> Option<&'a mut super::TreeNode> {
+    if node.path == target {
+        return Some(node);
+    }
+    if let super::NodeKind::Directory { children, .. } = &mut node.kind {
+        for child in children.iter_mut() {
+            if target.starts_with(&child.path) {
+                if let Some(found) = find_node_mut(child, target) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Re-scan a single directory's children, preserving expansion state of subdirectories.
+/// Returns true if the directory was found and refreshed.
+pub fn refresh_directory(tree: &mut super::TreeNode, target_dir: &Path) -> bool {
+    let Some(node) = find_node_mut(tree, target_dir) else {
+        return false;
+    };
+
+    // Record which child directories were expanded
+    let expanded: std::collections::HashSet<PathBuf> = match &node.kind {
+        super::NodeKind::Directory { children, .. } => children
+            .iter()
+            .filter(|c| c.is_expanded())
+            .map(|c| c.path.clone())
+            .collect(),
+        super::NodeKind::File => return false,
+    };
+
+    // Re-scan children from disk
+    let dir = node.path.clone();
+    populate_children(node, &dir);
+
+    // Restore expansion state
+    if let super::NodeKind::Directory { children, .. } = &mut node.kind {
+        for child in children.iter_mut() {
+            if expanded.contains(&child.path) {
+                child.set_expanded(true);
+                ensure_populated(child);
+            }
+        }
+    }
+
+    true
+}
+
+/// Collect paths of all expanded directories in the tree.
+pub fn collect_expanded_dirs(node: &super::TreeNode) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if node.is_dir() && node.is_expanded() {
+        dirs.push(node.path.clone());
+        if let Some(children) = node.children() {
+            for child in children {
+                dirs.extend(collect_expanded_dirs(child));
+            }
+        }
+    }
+    dirs
+}
+
+/// Synchronize a watcher with the current tree state:
+/// unwatch everything, then watch all expanded directories.
+pub fn sync_watcher(tree: &super::TreeNode, handle: &mut super::watch::WatcherHandle) {
+    handle.unwatch_all();
+    for dir in collect_expanded_dirs(tree) {
+        handle.watch(&dir);
+    }
+}
+
+/// Toggle a directory and update the watcher accordingly.
+/// When expanding: start watching the directory.
+/// When collapsing: stop watching the directory and its expanded children.
+pub fn toggle_at_path_watched(
+    tree: &mut super::TreeNode,
+    target: &Path,
+    handle: &mut super::watch::WatcherHandle,
+) -> bool {
+    // Collect expanded children before toggle (for unwatch on collapse)
+    let previously_expanded = find_node_mut(tree, target)
+        .map(|n| collect_expanded_dirs(n))
+        .unwrap_or_default();
+
+    if !toggle_at_path_lazy(tree, target) {
+        return false;
+    }
+
+    // Check if the node is now expanded or collapsed
+    if let Some(node) = find_node_mut(tree, target) {
+        if node.is_expanded() {
+            handle.watch(target);
+        } else {
+            // Unwatch this dir and all its previously-expanded children
+            for dir in &previously_expanded {
+                handle.unwatch(dir);
+            }
+        }
+    }
+
+    true
+}
+
 /// Find a README file in the given directory, checking common names in priority order.
 pub fn find_readme(dir: &Path) -> Option<PathBuf> {
     const NAMES: &[&str] = &[

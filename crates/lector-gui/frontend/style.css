@@ -261,30 +261,76 @@ html, body {
 
 #search-count { color: var(--fg-dim); }
 
-/* Annotation bar */
-#annotation-bar {
+/* Annotation modal */
+#annotation-modal {
   position: fixed;
-  bottom: 0; left: 0; right: 0;
-  background: var(--bg-header);
-  padding: 4px 8px;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6);
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.85em;
-  z-index: 50;
+  justify-content: center;
+  z-index: 100;
 }
 
-#annotation-bar.hidden { display: none; }
+#annotation-modal.hidden { display: none; }
+
+#annotation-dialog {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  width: 500px;
+  max-width: 90vw;
+}
+
+#annotation-selected-text {
+  background: var(--bg-header);
+  border-left: 3px solid var(--fg-link);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 0.85em;
+  color: var(--fg-dim);
+  max-height: 100px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
 
 #annotation-input {
-  flex: 1;
+  width: 100%;
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  padding: 2px 6px;
-  font-family: var(--font-mono);
-  font-size: 1em;
+  border-radius: 4px;
+  padding: 8px;
+  font-family: var(--font-body);
+  font-size: 0.9em;
+  resize: vertical;
   outline: none;
+}
+
+.annotation-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.annotation-actions button {
+  padding: 4px 16px;
+  background: var(--bg-header);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.annotation-actions button:hover { background: var(--bg-hover); }
+.annotation-actions .hidden { display: none; }
+
+#annotation-dialog .hint {
+  margin-top: 8px;
+  color: var(--fg-dim);
+  font-size: 0.75em;
 }
 
 /* Annotation highlights */
@@ -336,6 +382,20 @@ html, body {
 }
 
 .toc-entry:hover { background: var(--bg-hover); }
+.toc-entry.selected { background: var(--bg-selected); }
+.toc-annotation {
+  color: var(--fg-dim);
+  font-style: italic;
+  white-space: normal;
+  text-overflow: unset;
+}
+.toc-separator {
+  padding: 6px 8px 2px;
+  color: var(--fg-dim);
+  font-size: 0.75em;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
 .toc-entry.h1 { font-weight: bold; }
 .toc-entry.h2 { padding-left: 16px; }
 .toc-entry.h3 { padding-left: 28px; }

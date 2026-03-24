@@ -22,9 +22,11 @@ keyboard navigation, git-aware directory detection, and session memory
 - **File browser**: Visual directory browser (C-o) and path input with tab completion (C-x C-f)
 - **Link handling**: Local file links open in lector, external URLs open in default browser
 - **Pelican metadata**: Markdown files with Pelican-style headers rendered as a styled metadata block
+- **Text annotations**: Select text and annotate with C-m (GUI), stored in SQLite
 - **Position memory**: Scroll position saved per file in SQLite, restored on reopen
 - **File watching**: Tree auto-refreshes when files change on disk (only watches expanded directories)
 - **Gitignore-aware tree**: Respects `.gitignore` rules when scanning directories
+- **Version info**: `--version` / `-V` flag, version shown in help overlay (C-h)
 
 ## Install
 
@@ -80,6 +82,9 @@ lector ~/docs/notes.org   # Open an org-mode file
 
 clector                   # TUI in current directory
 clector DESIGN.md         # TUI with a file open
+
+lector --version          # Print version
+clector -V                # Print version (short flag)
 ```
 
 ## Keyboard Shortcuts
@@ -100,6 +105,7 @@ clector DESIGN.md         # TUI with a file open
 | `C-t` | Toggle tree pane |
 | `C-x C-t` | Toggle table of contents |
 | `C-x C-m` | Cycle ToC mode (side / replace tree / auto) |
+| `C-m` | Annotate selected text (GUI) |
 | `C-=` / `C--` | Increase / decrease font size |
 | `C-0` | Reset font size |
 | `M-t` | Cycle theme (Nord / eink / Tufte) |
@@ -125,7 +131,7 @@ toc_replace = false       # true = ToC always replaces tree pane
 size = 16.0
 ```
 
-Scroll positions are stored at `~/.local/share/lector/positions.db`.
+Scroll positions and annotations are stored at `~/.local/share/lector/positions.db`.
 
 ## Supported Formats
 
@@ -140,8 +146,9 @@ Scroll positions are stored at `~/.local/share/lector/positions.db`.
 
 ```
 crates/
-  lector-core/   Shared library — document loading, file tree, navigation,
-                 keybinding mapper, config (TOML), position persistence (SQLite)
+  lector-core/   Shared library — document loading, file tree (with filesystem
+                 watching), navigation, keybinding mapper, config (TOML),
+                 position + annotation persistence (SQLite)
   lector-gui/    Tauri 2 backend + plain HTML/CSS/JS frontend
   lector-tui/    ratatui + crossterm terminal interface
 ```

@@ -12,6 +12,8 @@ let tocReplace = false; // resolved mode: true = replace tree, false = side pane
 let pendingPrefix = null;
 let currentFile = null;
 let fontSize = 16;
+let tocEntries = [];
+let tocCursor = 0;
 
 // Init
 async function init() {
@@ -135,6 +137,16 @@ async function reloadFile() {
     document.getElementById('viewer-content').scrollTop = scrollPos;
     showToast('Reloaded');
   }
+}
+
+async function setTreeRootFromCursor() {
+  const entry = flatTree[treeCursor];
+  if (!entry) return;
+  const response = await invoke('set_tree_root', { path: entry.path });
+  flatTree = response.entries;
+  treeCursor = 0;
+  renderTree();
+  showToast('Root: ' + (flatTree[0]?.name || ''));
 }
 
 async function refreshTree() {
@@ -473,23 +485,71 @@ function cycleTocMode() {
 
 async function refreshToc() {
   const headings = await invoke('get_headings');
+  // Add annotations as ToC entries
+  let annotations = [];
+  if (currentFile) {
+    annotations = await invoke('get_annotations', { filePath: currentFile });
+  }
+  tocEntries = [
+    ...headings.map(h => ({ type: 'heading', ...h })),
+    ...annotations.map(a => ({
+      type: 'annotation',
+      text: a.comment || a.selected_text,
+      id: 'annotation-' + a.id,
+      level: 0,
+      annotation: a,
+    })),
+  ];
+  tocCursor = 0;
+  renderToc();
+}
+
+function renderToc() {
   const pane = document.getElementById('toc-pane');
   pane.innerHTML = '';
 
-  if (headings.length === 0) {
+  if (tocEntries.length === 0) {
     pane.innerHTML = '<div style="padding:8px;color:var(--fg-dim);font-size:0.85em">No headings</div>';
     return;
   }
 
-  headings.forEach(h => {
+  let hasAnnotations = tocEntries.some(e => e.type === 'annotation');
+  let annotationHeaderShown = false;
+
+  tocEntries.forEach((h, idx) => {
+    // Show a separator before annotations
+    if (h.type === 'annotation' && !annotationHeaderShown && hasAnnotations) {
+      annotationHeaderShown = true;
+      const sep = document.createElement('div');
+      sep.className = 'toc-separator';
+      sep.textContent = '— Notes —';
+      pane.appendChild(sep);
+    }
+
     const btn = document.createElement('button');
-    btn.className = 'toc-entry h' + h.level;
-    btn.textContent = h.text;
+    if (h.type === 'annotation') {
+      btn.className = 'toc-entry toc-annotation';
+      btn.textContent = '📝 ' + h.text;
+    } else {
+      btn.className = 'toc-entry h' + h.level;
+      btn.textContent = h.text;
+    }
+    if (idx === tocCursor && focusedPane === 'toc') btn.classList.add('selected');
     btn.addEventListener('click', () => {
-      scrollToHeading(h.id);
+      tocCursor = idx;
+      if (h.type === 'annotation' && h.annotation) {
+        scrollToAnnotation(h.annotation);
+      } else {
+        scrollToHeading(h.id);
+      }
+      renderToc();
     });
     pane.appendChild(btn);
   });
+
+  // Scroll selected into view
+  const selected = pane.querySelector('.selected');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
 }
 
 function scrollToHeading(id) {
@@ -497,10 +557,35 @@ function scrollToHeading(id) {
   const el = document.getElementById(id);
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // Brief highlight
     el.style.transition = 'background 0.3s';
     el.style.background = 'var(--bg-selected)';
     setTimeout(() => { el.style.background = ''; }, 1500);
+  }
+}
+
+function scrollToAnnotation(ann) {
+  // Scroll to the annotation's position in the viewer using text offset
+  const viewer = document.getElementById('viewer-content');
+  const viewerText = viewer.textContent;
+  const offset = lineColToOffset(viewerText, ann.start_line, ann.start_col);
+
+  // Walk text nodes to find the right position
+  const treeWalker = document.createTreeWalker(viewer, NodeFilter.SHOW_TEXT);
+  let totalOffset = 0;
+  while (treeWalker.nextNode()) {
+    const node = treeWalker.currentNode;
+    if (totalOffset + node.length > offset) {
+      // Found the node — scroll its parent into view
+      const parent = node.parentElement;
+      if (parent) {
+        parent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        parent.style.transition = 'background 0.3s';
+        parent.style.background = 'var(--bg-selected)';
+        setTimeout(() => { parent.style.background = ''; }, 1500);
+      }
+      return;
+    }
+    totalOffset += node.length;
   }
 }
 
@@ -581,6 +666,8 @@ document.addEventListener('keydown', (e) => {
   if (pendingPrefix === 'x') {
     pendingPrefix = null;
     if (e.ctrlKey && e.key === 'f') { showOpenBar(); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 'a') { showAnnotationsList(); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 'd') { setTreeRootFromCursor(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 't') { toggleToc(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'm') { cycleTocMode(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'c') { saveCurrentPosition().then(() => invoke('quit')); e.preventDefault(); return; }
@@ -593,11 +680,13 @@ document.addEventListener('keydown', (e) => {
     switch (e.key) {
       case 'n':
         if (focusedPane === 'viewer') scrollViewer(1);
-        else { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); renderTree(); }
+        else if (focusedPane === 'tree') { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); renderTree(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.min(tocCursor + 1, tocEntries.length - 1); renderToc(); }
         e.preventDefault(); return;
       case 'p':
         if (focusedPane === 'viewer') scrollViewer(-1);
-        else { treeCursor = Math.max(treeCursor - 1, 0); renderTree(); }
+        else if (focusedPane === 'tree') { treeCursor = Math.max(treeCursor - 1, 0); renderTree(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.max(tocCursor - 1, 0); renderToc(); }
         e.preventDefault(); return;
       case 'v':
         pageViewer(1);
@@ -606,6 +695,10 @@ document.addEventListener('keydown', (e) => {
         if (focusedPane === 'tree') {
           const entry = flatTree[treeCursor];
           if (entry && entry.is_dir && !entry.is_expanded) toggleDir(entry.path);
+        } else if (focusedPane === 'toc' && tocEntries[tocCursor]) {
+          const tocEntry = tocEntries[tocCursor];
+          if (tocEntry.type === 'annotation' && tocEntry.annotation) scrollToAnnotation(tocEntry.annotation);
+          else scrollToHeading(tocEntry.id);
         } else {
           scrollViewer(1);
         }
@@ -673,15 +766,43 @@ document.addEventListener('keydown', (e) => {
   // Non-modifier keys
   if (!e.ctrlKey && !e.altKey && !e.metaKey) {
     switch (e.key) {
-      case 'Tab':
-        focusedPane = focusedPane === 'tree' ? 'viewer' : 'tree';
+      case 'Tab': {
+        const visible = [];
+        if (showTree) visible.push('tree');
+        visible.push('viewer');
+        if (showToc) visible.push('toc');
+        const idx = visible.indexOf(focusedPane);
+        focusedPane = visible[(idx + 1) % visible.length];
         renderTree();
+        if (showToc) renderToc();
         e.preventDefault(); return;
+      }
+      case 'ArrowUp':
+        if (focusedPane === 'viewer') scrollViewer(-1);
+        else if (focusedPane === 'tree') { treeCursor = Math.max(treeCursor - 1, 0); renderTree(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.max(tocCursor - 1, 0); renderToc(); }
+        e.preventDefault(); return;
+      case 'ArrowDown':
+        if (focusedPane === 'viewer') scrollViewer(1);
+        else if (focusedPane === 'tree') { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); renderTree(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.min(tocCursor + 1, tocEntries.length - 1); renderToc(); }
+        e.preventDefault(); return;
+      case 'ArrowLeft':
+        if (focusedPane === 'tree') {
+          const entry = flatTree[treeCursor];
+          if (entry && entry.is_dir && entry.is_expanded) toggleDir(entry.path);
+        }
+        e.preventDefault(); return;
+      case 'ArrowRight':
       case 'Enter':
         if (focusedPane === 'tree' && flatTree[treeCursor]) {
           const entry = flatTree[treeCursor];
           if (entry.is_dir) toggleDir(entry.path);
           else openFile(entry.path);
+        } else if (focusedPane === 'toc' && tocEntries[tocCursor]) {
+          const tocEntry = tocEntries[tocCursor];
+          if (tocEntry.type === 'annotation' && tocEntry.annotation) scrollToAnnotation(tocEntry.annotation);
+          else scrollToHeading(tocEntry.id);
         }
         e.preventDefault(); return;
       case 'q':
@@ -695,6 +816,25 @@ document.addEventListener('keydown', (e) => {
 
 let pendingAnnotationRange = null;
 
+let editingAnnotationId = null; // set when editing an existing annotation
+let activeAnnotationRanges = []; // [{range, annotation}] for click detection
+
+function showAnnotationModal(selectedText, existingComment, annotationId) {
+  editingAnnotationId = annotationId || null;
+
+  document.getElementById('annotation-selected-text').textContent = selectedText;
+  document.getElementById('annotation-input').value = existingComment || '';
+  document.getElementById('annotation-modal').classList.remove('hidden');
+  document.getElementById('annotation-delete-btn').classList.toggle('hidden', !annotationId);
+  document.getElementById('annotation-input').focus();
+}
+
+function hideAnnotationModal() {
+  document.getElementById('annotation-modal').classList.add('hidden');
+  pendingAnnotationRange = null;
+  editingAnnotationId = null;
+}
+
 function showAnnotationBar() {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) {
@@ -702,7 +842,6 @@ function showAnnotationBar() {
     return;
   }
 
-  // Capture the selected text and its text offset within viewer-content
   const range = sel.getRangeAt(0);
   const selectedText = sel.toString().trim();
   if (!selectedText) {
@@ -710,7 +849,6 @@ function showAnnotationBar() {
     return;
   }
 
-  // Calculate text offset: count characters from start of viewer-content to selection
   const viewer = document.getElementById('viewer-content');
   const preRange = document.createRange();
   preRange.setStart(viewer, 0);
@@ -718,20 +856,10 @@ function showAnnotationBar() {
   const startOffset = preRange.toString().length;
   const endOffset = startOffset + selectedText.length;
 
-  // Map text offsets to source line+column
   if (!currentFile) return;
 
-  pendingAnnotationRange = {
-    selectedText,
-    startOffset,
-    endOffset,
-  };
-
-  const bar = document.getElementById('annotation-bar');
-  const input = document.getElementById('annotation-input');
-  bar.classList.remove('hidden');
-  input.value = '';
-  input.focus();
+  pendingAnnotationRange = { selectedText, startOffset, endOffset };
+  showAnnotationModal(selectedText, '', null);
 }
 
 async function saveAnnotation(comment) {
@@ -794,6 +922,7 @@ function lineColToOffset(text, line, col) {
 }
 
 async function applyAnnotations() {
+  activeAnnotationRanges = [];
   if (!currentFile || !CSS.highlights) return;
 
   // Clear existing highlights
@@ -841,10 +970,8 @@ async function applyAnnotations() {
     if (rangeSet) {
       const color = ann.color || 'yellow';
       if (!byColor[color]) byColor[color] = [];
-      byColor[color].push(new Range().constructor === Range ? range : range);
-
-      // Store annotation data on the range for tooltip
-      range._annotation = ann;
+      byColor[color].push(range);
+      activeAnnotationRanges.push({ range, annotation: ann });
     }
   }
 
@@ -857,26 +984,99 @@ async function applyAnnotations() {
   }
 }
 
-function hideAnnotationBar() {
-  document.getElementById('annotation-bar').classList.add('hidden');
-  pendingAnnotationRange = null;
+async function showAnnotationsList() {
+  // Ensure ToC is visible
+  if (!showToc) {
+    await toggleToc();
+  }
+  // Refresh to ensure annotations are loaded
+  await refreshToc();
+  // Find the first annotation entry and move cursor there
+  const annotIdx = tocEntries.findIndex(e => e.type === 'annotation');
+  if (annotIdx >= 0) {
+    tocCursor = annotIdx;
+    focusedPane = 'toc';
+    renderToc();
+    renderTree();
+  } else {
+    showToast('No annotations for this file');
+  }
 }
 
 document.getElementById('annotation-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey) {
     const comment = document.getElementById('annotation-input').value;
-    hideAnnotationBar();
-    saveAnnotation(comment);
+    const pending = pendingAnnotationRange;
+    const editId = editingAnnotationId;
+    hideAnnotationModal();
+    pendingAnnotationRange = pending;
+    if (editId) {
+      // Update: delete old and save new
+      invoke('delete_annotation', { id: editId }).then(() => saveAnnotation(comment));
+    } else {
+      saveAnnotation(comment);
+    }
     e.preventDefault();
   } else if (e.key === 'Escape' || (e.ctrlKey && e.key === 'g')) {
-    hideAnnotationBar();
+    hideAnnotationModal();
     e.preventDefault();
   }
   e.stopPropagation();
 });
 
-// Intercept link clicks in the viewer — local files open in lector, others in browser
+document.getElementById('annotation-save-btn').addEventListener('click', () => {
+  const comment = document.getElementById('annotation-input').value;
+  const pending = pendingAnnotationRange;
+  const editId = editingAnnotationId;
+  hideAnnotationModal();
+  pendingAnnotationRange = pending;
+  if (editId) {
+    invoke('delete_annotation', { id: editId }).then(() => saveAnnotation(comment));
+  } else {
+    saveAnnotation(comment);
+  }
+});
+
+document.getElementById('annotation-delete-btn').addEventListener('click', async () => {
+  if (editingAnnotationId) {
+    await invoke('delete_annotation', { id: editingAnnotationId });
+    hideAnnotationModal();
+    await applyAnnotations();
+    if (showToc) await refreshToc();
+    showToast('Annotation deleted');
+  }
+});
+
+document.getElementById('annotation-cancel-btn').addEventListener('click', () => {
+  hideAnnotationModal();
+});
+
+// Intercept clicks in the viewer — check for annotation highlights first, then links
 document.getElementById('viewer-content').addEventListener('click', async (e) => {
+  // Check if click is on an annotated range
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount && activeAnnotationRanges.length) {
+    const clickRange = sel.getRangeAt(0);
+    for (const { range, annotation } of activeAnnotationRanges) {
+      if (range.isPointInRange(clickRange.startContainer, clickRange.startOffset)) {
+        // Clicked on an annotation — open modal to view/edit
+        const viewer = document.getElementById('viewer-content');
+        const viewerText = viewer.textContent;
+        const startOff = lineColToOffset(viewerText, annotation.start_line, annotation.start_col);
+        const endOff = lineColToOffset(viewerText, annotation.end_line, annotation.end_col);
+        pendingAnnotationRange = {
+          selectedText: annotation.selected_text,
+          startOffset: startOff,
+          endOffset: endOff,
+        };
+        showAnnotationModal(annotation.selected_text, annotation.comment, annotation.id);
+        e.preventDefault();
+        return;
+      }
+    }
+  }
+
+  // Check for links
   const link = e.target.closest('a[href]');
   if (link) {
     e.preventDefault();
@@ -888,6 +1088,13 @@ document.getElementById('viewer-content').addEventListener('click', async (e) =>
     }
   }
 });
+
+// Listen for file watcher events — auto-refresh tree when files change
+if (window.__TAURI__.event) {
+  window.__TAURI__.event.listen('tree-changed', async () => {
+    await loadTree();
+  });
+}
 
 // Start
 init();

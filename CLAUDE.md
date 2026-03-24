@@ -64,10 +64,11 @@ crates/lector-gui/
 ### Key modules in lector-core
 
 - `document/` — Document loading, format detection
-- `tree/` — File tree model with gitignore-aware scanning (`ignore` crate) and git root detection (`git2`)
+- `tree/` — File tree model with gitignore-aware scanning (`ignore` crate), git root detection, and filesystem watching (`notify` crate via `watch.rs`)
 - `nav/` — Navigation actions, emacs keybinding mapper, chord support (C-x C-f, C-x C-c)
 - `state/config.rs` — TOML config at `$XDG_CONFIG_HOME/lector/config.toml`
 - `state/position.rs` — SQLite position store at `$XDG_DATA_HOME/lector/positions.db`
+- `state/annotations.rs` — SQLite annotation store at `$XDG_DATA_HOME/lector/positions.db`
 
 ### Adding a new document format
 

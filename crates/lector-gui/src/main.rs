@@ -3,13 +3,22 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use tauri::{Emitter, Manager};
+
 use comrak::{markdown_to_html, Options};
 use serde::Serialize;
 use lector_core::document::{markdown, Document, Format};
 use lector_core::state::annotations::{Annotation, AnnotationStore};
 use lector_core::state::config::Config;
 use lector_core::state::position::PositionStore;
-use lector_core::tree::{self, fs as tree_fs, git, TreeNode};
+use lector_core::tree::{self, fs as tree_fs, git, watch as tree_watch, TreeNode};
+
+/// Resync the file watcher with the current tree state.
+fn resync_watcher(state: &mut AppState) {
+    if let Some(ref mut watcher) = state.watcher {
+        tree_fs::sync_watcher(&state.file_tree, watcher);
+    }
+}
 
 /// Application state shared across Tauri commands.
 struct AppState {
@@ -19,6 +28,7 @@ struct AppState {
     file_tree: TreeNode,
     current_file: Option<PathBuf>,
     initial_path: Option<PathBuf>,
+    watcher: Option<tree_watch::WatcherHandle>,
 }
 
 #[derive(Serialize)]
@@ -75,7 +85,12 @@ fn get_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
 fn toggle_dir(path: String, state: tauri::State<'_, Mutex<AppState>>) {
     let mut state = state.lock().unwrap();
     let path = PathBuf::from(&path);
-    tree_fs::toggle_at_path_lazy(&mut state.file_tree, &path);
+    if let Some(mut watcher) = state.watcher.take() {
+        tree_fs::toggle_at_path_watched(&mut state.file_tree, &path, &mut watcher);
+        state.watcher = Some(watcher);
+    } else {
+        tree_fs::toggle_at_path_lazy(&mut state.file_tree, &path);
+    }
 }
 
 #[tauri::command]
@@ -121,11 +136,50 @@ fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<Docume
     Ok(Some(DocumentResponse { html, filename, format }))
 }
 
+/// Set a new tree root. If path is a file, uses its parent directory.
+/// Resolves to git root if available.
+#[tauri::command]
+fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
+    let mut state = state.lock().unwrap();
+    let target = PathBuf::from(&path);
+    let dir = if target.is_dir() {
+        target
+    } else {
+        target.parent().unwrap_or(&target).to_path_buf()
+    };
+    let root = git::find_git_root(&dir).unwrap_or(dir);
+    state.file_tree = tree_fs::scan_directory(&root);
+    // Expand to current file if it's under the new root
+    if let Some(cf) = state.current_file.clone() {
+        if cf.starts_with(&root) {
+            tree_fs::expand_to_path_lazy(&mut state.file_tree, &cf);
+        }
+    }
+    resync_watcher(&mut state);
+    let flat = state.file_tree.flatten(0);
+    let entries = flat
+        .iter()
+        .map(|entry| TreeEntry {
+            name: entry.node.name.clone(),
+            path: entry.node.path.to_string_lossy().into_owned(),
+            depth: entry.depth,
+            is_dir: entry.node.is_dir(),
+            is_expanded: entry.node.is_expanded(),
+            is_current: state
+                .current_file
+                .as_ref()
+                .is_some_and(|cf| cf == &entry.node.path),
+        })
+        .collect();
+    TreeResponse { entries }
+}
+
 #[tauri::command]
 fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     let mut state = state.lock().unwrap();
     let root = state.file_tree.path.clone();
     state.file_tree = tree_fs::scan_directory(&root);
+    resync_watcher(&mut state);
     let flat = state.file_tree.flatten(0);
     let entries = flat
         .iter()
@@ -157,6 +211,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
         // Use git root if available
         let root = git::find_git_root(&file_path).unwrap_or(file_path);
         state.file_tree = tree_fs::scan_directory(&root);
+        resync_watcher(&mut state);
 
         // Look for a README in the root
         let readme = tree_fs::find_readme(&root);
@@ -195,6 +250,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
         if new_root != state.file_tree.path {
             state.file_tree = tree_fs::scan_directory(&new_root);
             tree_fs::expand_to_path_lazy(&mut state.file_tree, &file_path);
+            resync_watcher(&mut state);
         }
 
         state.current_file = Some(file_path);
@@ -618,6 +674,14 @@ fn main() {
         tree_fs::expand_to_path_lazy(&mut file_tree, p);
     }
 
+    // Set up file watcher for expanded directories
+    let (watcher, watcher_rx) = tree_watch::create_watcher()
+        .map(|(mut handle, rx)| {
+            tree_fs::sync_watcher(&file_tree, &mut handle);
+            (Some(handle), Some(rx))
+        })
+        .unwrap_or((None, None));
+
     let initial_path = path
         .filter(|p| p.is_file())
         .or_else(|| tree_fs::find_readme(&root));
@@ -629,6 +693,7 @@ fn main() {
         file_tree,
         current_file: None,
         initial_path,
+        watcher,
     };
 
     tauri::Builder::default()
@@ -641,6 +706,7 @@ fn main() {
             open_path,
             reload_file,
             refresh_tree,
+            set_tree_root,
             complete_path,
             browse_directory,
             get_headings,
@@ -656,6 +722,43 @@ fn main() {
             load_position,
             quit,
         ])
+        .setup(move |app| {
+            // Spawn background thread to poll file watcher events
+            if let Some(rx) = watcher_rx {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    loop {
+                        // Block until an event arrives (or timeout)
+                        match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                            Ok(Ok(_event)) => {
+                                // Debounce: wait briefly for more events to accumulate
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+
+                                // Drain all pending events (including the initial one)
+                                let state: tauri::State<'_, Mutex<AppState>> = app_handle.state();
+                                let mut state = state.lock().unwrap();
+                                let watched = state.watcher.as_ref()
+                                    .map(|w| w.watched_dirs.clone())
+                                    .unwrap_or_default();
+                                let changed = tree_watch::drain_events(&rx, &watched);
+
+                                if changed.is_empty() {
+                                    continue;
+                                }
+                                for dir in changed {
+                                    tree_fs::refresh_directory(&mut state.file_tree, &dir);
+                                }
+                                drop(state);
+                                let _ = app_handle.emit("tree-changed", ());
+                            }
+                            Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                });
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

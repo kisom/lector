@@ -15,6 +15,7 @@ pub enum Action {
     TreeExpand,
     TreeCollapse,
     TreeSelect,
+    TreeSetRoot,
 
     // Pane management
     ToggleFocus,
@@ -51,14 +52,21 @@ pub enum Action {
 pub enum FocusedPane {
     Tree,
     Viewer,
+    Toc,
 }
 
 impl FocusedPane {
-    pub fn toggle(&mut self) {
-        *self = match self {
-            Self::Tree => Self::Viewer,
-            Self::Viewer => Self::Tree,
+    /// Cycle focus through the given visible panes.
+    pub fn cycle(&mut self, visible: &[FocusedPane]) {
+        if visible.is_empty() {
+            return;
+        }
+        let current_idx = visible.iter().position(|p| p == self);
+        let next = match current_idx {
+            Some(idx) => visible[(idx + 1) % visible.len()],
+            None => visible[0],
         };
+        *self = next;
     }
 }
 
@@ -127,6 +135,8 @@ impl KeyMapper {
             ("x", true, "f") => Some(Action::OpenPath),
             // C-x C-a → list annotations
             ("x", true, "a") => Some(Action::ListAnnotations),
+            // C-x C-d → set selected directory as tree root
+            ("x", true, "d") => Some(Action::TreeSetRoot),
             // C-x C-t → toggle table of contents
             ("x", true, "t") => Some(Action::ToggleToc),
             // C-x C-m → cycle ToC mode (side panel vs replace tree)
@@ -144,20 +154,20 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
         // Emacs-style bindings
         (true, false, "n") => Some(match focus {
             FocusedPane::Viewer => Action::ScrollDown,
-            FocusedPane::Tree => Action::TreeNext,
+            FocusedPane::Tree | FocusedPane::Toc => Action::TreeNext,
         }),
         (true, false, "p") => Some(match focus {
             FocusedPane::Viewer => Action::ScrollUp,
-            FocusedPane::Tree => Action::TreePrev,
+            FocusedPane::Tree | FocusedPane::Toc => Action::TreePrev,
         }),
         (true, false, "v") => Some(Action::PageDown),
         (false, true, "v") => Some(Action::PageUp),
         (true, false, "f") => Some(match focus {
-            FocusedPane::Tree => Action::TreeExpand,
+            FocusedPane::Tree | FocusedPane::Toc => Action::TreeExpand,
             FocusedPane::Viewer => Action::ScrollDown,
         }),
         (true, false, "b") => Some(match focus {
-            FocusedPane::Tree => Action::TreeCollapse,
+            FocusedPane::Tree | FocusedPane::Toc => Action::TreeCollapse,
             FocusedPane::Viewer => Action::ScrollUp,
         }),
 
@@ -194,11 +204,29 @@ pub fn map_key(key: &str, mods: Modifiers, focus: FocusedPane) -> Option<Action>
         (true, false, "-") => Some(Action::FontSizeDecrease),
         (true, false, "0") => Some(Action::FontSizeReset),
 
-        // Tab to toggle focus
+        // Arrow keys
+        (false, false, "up") => Some(match focus {
+            FocusedPane::Viewer => Action::ScrollUp,
+            FocusedPane::Tree | FocusedPane::Toc => Action::TreePrev,
+        }),
+        (false, false, "down") => Some(match focus {
+            FocusedPane::Viewer => Action::ScrollDown,
+            FocusedPane::Tree | FocusedPane::Toc => Action::TreeNext,
+        }),
+        (false, false, "left") if matches!(focus, FocusedPane::Tree | FocusedPane::Toc) => {
+            Some(Action::TreeCollapse)
+        }
+        (false, false, "right") if matches!(focus, FocusedPane::Tree | FocusedPane::Toc) => {
+            Some(Action::TreeSelect)
+        }
+
+        // Tab to cycle focus between visible panes
         (false, false, "tab") => Some(Action::ToggleFocus),
 
-        // Enter to select in tree
-        (false, false, "enter") if focus == FocusedPane::Tree => Some(Action::TreeSelect),
+        // Enter to select in tree/toc
+        (false, false, "enter") if matches!(focus, FocusedPane::Tree | FocusedPane::Toc) => {
+            Some(Action::TreeSelect)
+        }
 
         // q to quit (when no modifier)
         (false, false, "q") => Some(Action::Quit),

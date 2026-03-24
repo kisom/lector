@@ -1,6 +1,7 @@
 pub mod debug;
 pub mod fs;
 pub mod git;
+pub mod watch;
 
 use std::path::{Path, PathBuf};
 
