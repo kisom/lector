@@ -129,14 +129,19 @@ mod tests {
         let dir = tmp.path();
 
         handle.watch(dir);
-        // Small delay for watcher to register
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        fs::write(dir.join("new.md"), "hello").unwrap();
-        // Wait for event to propagate
         std::thread::sleep(std::time::Duration::from_millis(200));
 
-        let changed = drain_events(&rx, &handle.watched_dirs);
+        fs::write(dir.join("new.md"), "hello").unwrap();
+
+        // Retry with increasing delays — FSEvents on macOS can be slow
+        let mut changed = std::collections::HashSet::new();
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            changed.extend(drain_events(&rx, &handle.watched_dirs));
+            if changed.contains(&dir.to_path_buf()) {
+                break;
+            }
+        }
         assert!(changed.contains(&dir.to_path_buf()));
     }
 
