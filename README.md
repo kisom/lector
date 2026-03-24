@@ -18,10 +18,37 @@ Lector provides a two-pane interface — a file tree browser on the left and a r
 
 ## Install
 
-Requires Rust. On macOS, `cargo build` works directly. On NixOS, use the provided flake.
+### NixOS (flake)
+
+Run directly without installing:
 
 ```bash
-# NixOS
+nix run github:kisom/lector            # GUI
+nix run github:kisom/lector#tui        # TUI
+```
+
+Install to your profile:
+
+```bash
+nix profile install github:kisom/lector        # GUI (lector)
+nix profile install github:kisom/lector#tui    # TUI (clector)
+```
+
+Or add to your NixOS/home-manager configuration:
+
+```nix
+# flake.nix inputs
+inputs.lector.url = "github:kisom/lector";
+
+# In your packages list
+inputs.lector.packages.${system}.default  # GUI
+inputs.lector.packages.${system}.tui      # TUI
+```
+
+### From source
+
+```bash
+# NixOS — use the dev shell
 nix develop --command cargo build --release
 
 # macOS / other (with Rust installed)

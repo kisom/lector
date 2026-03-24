@@ -343,6 +343,37 @@ fn quit(app: tauri::AppHandle, state: tauri::State<'_, Mutex<AppState>>) {
     app.exit(0);
 }
 
+/// Resolve a link: if it's a local file (relative to the current document), return its path.
+/// Otherwise open the URL in the default browser and return None.
+#[tauri::command]
+fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
+    // Absolute file path
+    let as_path = PathBuf::from(&url);
+    if as_path.is_absolute() && as_path.exists() {
+        return Some(as_path.to_string_lossy().into_owned());
+    }
+
+    // Relative path — resolve against current file's directory
+    let state = state.lock().unwrap();
+    if let Some(ref current) = state.current_file {
+        if let Some(dir) = current.parent() {
+            let resolved = dir.join(&url);
+            if resolved.exists() {
+                return Some(
+                    std::fs::canonicalize(&resolved)
+                        .unwrap_or(resolved)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+
+    // Not a local file — open in browser
+    let _ = open::that(&url);
+    None
+}
+
 // -- Rendering --
 
 fn render_to_html(doc: &Document) -> String {
@@ -457,6 +488,7 @@ fn main() {
             refresh_tree,
             complete_path,
             browse_directory,
+            resolve_link,
             get_config,
             cycle_theme,
             adjust_font_size,

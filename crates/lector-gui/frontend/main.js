@@ -581,5 +581,19 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Intercept link clicks in the viewer — local files open in lector, others in browser
+document.getElementById('viewer-content').addEventListener('click', async (e) => {
+  const link = e.target.closest('a[href]');
+  if (link) {
+    e.preventDefault();
+    const href = link.getAttribute('href');
+    if (!href) return;
+    const localPath = await invoke('resolve_link', { url: href });
+    if (localPath) {
+      await handleOpenPath(localPath);
+    }
+  }
+});
+
 // Start
 init();

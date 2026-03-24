@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 comrak = "0.37"
 lector-core = { path = "../lector-core" }
+open = "5"
 orgize = "0.9"
 rst_parser = "0.4"
 rst_renderer = "0.4"
