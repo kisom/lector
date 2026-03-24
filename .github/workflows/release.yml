@@ -112,6 +112,7 @@ jobs:
           homebrew-tap: kisom/homebrew-tap
           base-branch: master
           tag-name: ${{ steps.extract-version.outputs.tag-name }}
+          download-url: https://github.com/kisom/lector/archive/refs/tags/${{ steps.extract-version.outputs.tag-name }}.tar.gz
           commit-message: |
             {{formulaName}} {{version}}
 
