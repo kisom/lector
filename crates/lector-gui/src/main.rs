@@ -437,7 +437,8 @@ fn get_headings(state: tauri::State<'_, Mutex<AppState>>) -> Vec<TocEntry> {
 }
 
 fn extract_headings(html: &str) -> Vec<TocEntry> {
-    // Simple regex-free parser: look for <h1-h6 id="...">...</h1-h6>
+    // Simple regex-free parser: look for <h1-h6>...</h1-h6> and extract id attributes
+    // from either the heading tag itself or child anchor elements (comrak puts id on <a>).
     let mut entries = Vec::new();
     let mut pos = 0;
     let bytes = html.as_bytes();
@@ -449,28 +450,20 @@ fn extract_headings(html: &str) -> Vec<TocEntry> {
             let after_h = abs + 2;
             if after_h < bytes.len() && bytes[after_h].is_ascii_digit() {
                 let level = bytes[after_h] - b'0';
-                // Find the id attribute
                 let tag_end = html[abs..].find('>').map(|i| abs + i);
                 if let Some(te) = tag_end {
-                    let tag = &html[abs..te];
-                    let id = tag
-                        .find("id=\"")
-                        .map(|i| {
-                            let start = i + 4;
-                            let end = tag[start..].find('"').unwrap_or(0) + start;
-                            &tag[start..end]
-                        })
-                        .unwrap_or("");
-
                     // Find closing tag
                     let close_tag = format!("</h{level}>");
                     if let Some(close_idx) = html[te..].find(&close_tag) {
                         let text_start = te + 1;
                         let text_end = te + close_idx;
-                        // Strip any inner HTML tags from the heading text
                         let raw_text = &html[text_start..text_end];
-                        let text = strip_html_tags(raw_text);
 
+                        // Look for id="" on the <h> tag itself, then in child elements
+                        let heading_region = &html[abs..text_end];
+                        let id = find_id_attr(heading_region).unwrap_or("");
+
+                        let text = strip_html_tags(raw_text);
                         if !text.trim().is_empty() {
                             entries.push(TocEntry {
                                 level,
@@ -491,6 +484,14 @@ fn extract_headings(html: &str) -> Vec<TocEntry> {
     entries
 }
 
+/// Find the first `id="..."` attribute value in an HTML fragment.
+fn find_id_attr(html: &str) -> Option<&str> {
+    let idx = html.find("id=\"")?;
+    let start = idx + 4;
+    let end = html[start..].find('"')? + start;
+    Some(&html[start..end])
+}
+
 fn strip_html_tags(s: &str) -> String {
     let mut result = String::new();
     let mut in_tag = false;
@@ -507,6 +508,29 @@ fn strip_html_tags(s: &str) -> String {
 }
 
 // -- Annotations --
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use comrak::{markdown_to_html, Options};
+
+    #[test]
+    fn test_comrak_heading_output() {
+        let mut opts = Options::default();
+        opts.extension.header_ids = Some("heading-".to_string());
+        opts.render.r#unsafe = true;
+        let md = "# Hello World\n## Second heading\n### Third\n";
+        let html = markdown_to_html(md, &opts);
+        eprintln!("COMRAK HTML:\n{}", html);
+
+        let entries = extract_headings(&html);
+        for e in &entries {
+            eprintln!("ENTRY: level={} id={:?} text={:?}", e.level, e.id, e.text);
+        }
+        assert!(!entries.is_empty());
+        assert!(!entries[0].id.is_empty(), "heading id should not be empty");
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]

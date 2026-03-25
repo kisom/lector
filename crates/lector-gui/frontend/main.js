@@ -548,6 +548,7 @@ function renderToc() {
     }
     if (idx === tocCursor && focusedPane === 'toc') btn.classList.add('selected');
     btn.addEventListener('click', () => {
+      focusedPane = 'toc';
       tocCursor = idx;
       if (h.type === 'annotation' && h.annotation) {
         scrollToAnnotation(h.annotation);
@@ -567,12 +568,13 @@ function renderToc() {
 function scrollToHeading(id) {
   if (!id) return;
   const el = document.getElementById(id);
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    el.style.transition = 'background 0.3s';
-    el.style.background = 'var(--bg-selected)';
-    setTimeout(() => { el.style.background = ''; }, 1500);
-  }
+  if (!el) return;
+  // Scroll the heading (or its parent <h> tag) into view
+  const target = el.closest('h1,h2,h3,h4,h5,h6') || el;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  target.style.transition = 'background 0.3s';
+  target.style.background = 'var(--bg-selected)';
+  setTimeout(() => { target.style.background = ''; }, 1500);
 }
 
 function scrollToAnnotation(ann) {
