@@ -7,6 +7,9 @@ use tauri::{Emitter, Manager};
 
 use comrak::{markdown_to_html, Options};
 use serde::Serialize;
+use syntect::html::{ClassStyle, ClassedHTMLGenerator};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 use lector_core::document::{markdown, Document, Format};
 use lector_core::state::annotations::{Annotation, AnnotationStore};
 use lector_core::state::config::Config;
@@ -104,7 +107,7 @@ fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<D
     }
 
     let doc = Document::load(&file_path).map_err(|e| e.to_string())?;
-    let html = render_to_html(&doc);
+    let html = render_to_html(&doc, &file_path);
     let filename = file_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -127,7 +130,7 @@ fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<Docume
         return Ok(None);
     };
     let doc = Document::load(file_path).map_err(|e| e.to_string())?;
-    let html = render_to_html(&doc);
+    let html = render_to_html(&doc, file_path);
     let filename = file_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -217,7 +220,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
         let readme = tree_fs::find_readme(&root);
         if let Some(readme_path) = readme {
             let doc = Document::load(&readme_path).map_err(|e| e.to_string())?;
-            let html = render_to_html(&doc);
+            let html = render_to_html(&doc, &readme_path);
             let filename = readme_path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -236,7 +239,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
         }
 
         let doc = Document::load(&file_path).map_err(|e| e.to_string())?;
-        let html = render_to_html(&doc);
+        let html = render_to_html(&doc, &file_path);
         let filename = file_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -429,7 +432,7 @@ fn get_headings(state: tauri::State<'_, Mutex<AppState>>) -> Vec<TocEntry> {
     let Ok(doc) = Document::load(file) else {
         return Vec::new();
     };
-    let html = render_to_html(&doc);
+    let html = render_to_html(&doc, file);
     extract_headings(&html)
 }
 
@@ -578,7 +581,12 @@ fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option
 
 // -- Rendering --
 
-fn render_to_html(doc: &Document) -> String {
+fn syntax_set() -> &'static SyntaxSet {
+    static SS: std::sync::OnceLock<SyntaxSet> = std::sync::OnceLock::new();
+    SS.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn render_to_html(doc: &Document, path: &std::path::Path) -> String {
     match doc.format {
         Format::Markdown => {
             let (meta, content) = markdown::extract_metadata(&doc.source);
@@ -614,8 +622,42 @@ fn render_to_html(doc: &Document) -> String {
             }
             Err(_) => html_pre(&doc.source),
         },
-        Format::Plain => html_pre(&doc.source),
+        Format::Plain => render_plain(doc, path),
     }
+}
+
+/// Try syntax highlighting via syntect; fall back to plain <pre>.
+fn render_plain(doc: &Document, path: &std::path::Path) -> String {
+    let ss = syntax_set();
+    let syntax = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(|ext| ss.find_syntax_by_extension(ext))
+        .or_else(|| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|name| ss.find_syntax_by_extension(name))
+        });
+
+    let Some(syntax) = syntax else {
+        return html_pre(&doc.source);
+    };
+
+    // "Plain Text" syntax offers no highlighting — skip it.
+    if syntax.name == "Plain Text" {
+        return html_pre(&doc.source);
+    }
+
+    let mut gen = ClassedHTMLGenerator::new_with_class_style(
+        syntax,
+        ss,
+        ClassStyle::SpacedPrefixed { prefix: "syn-" },
+    );
+    for line in LinesWithEndings::from(&doc.source) {
+        let _ = gen.parse_html_for_line_which_includes_newline(line);
+    }
+    let highlighted = gen.finalize();
+    format!("<pre class=\"syntax-highlight\"><code>{highlighted}</code></pre>")
 }
 
 fn html_pre(source: &str) -> String {

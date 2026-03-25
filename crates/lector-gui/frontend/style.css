@@ -18,6 +18,16 @@
   --border: #4c566a;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  --syn-comment: #616e88;
+  --syn-keyword: #81a1c1;
+  --syn-storage: #81a1c1;
+  --syn-string: #a3be8c;
+  --syn-constant: #b48ead;
+  --syn-entity: #88c0d0;
+  --syn-variable: #d8dee9;
+  --syn-support: #8fbcbb;
+  --syn-punctuation: #eceff4;
+  --syn-operator: #81a1c1;
 }
 
 /* Theme: eink */
@@ -37,6 +47,16 @@
   --border: #cccccc;
   --font-body: Georgia, "Times New Roman", serif;
   --font-mono: "Courier New", monospace;
+  --syn-comment: #888888;
+  --syn-keyword: #000000;
+  --syn-storage: #000000;
+  --syn-string: #444444;
+  --syn-constant: #333333;
+  --syn-entity: #000000;
+  --syn-variable: #222222;
+  --syn-support: #333333;
+  --syn-punctuation: #555555;
+  --syn-operator: #000000;
 }
 
 /* Theme: Tufte */
@@ -56,6 +76,16 @@
   --border: #cccccc;
   --font-body: "ETBembo", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --font-mono: Consolas, "Liberation Mono", monospace;
+  --syn-comment: #998866;
+  --syn-keyword: #770000;
+  --syn-storage: #770000;
+  --syn-string: #226622;
+  --syn-constant: #663399;
+  --syn-entity: #333333;
+  --syn-variable: #111111;
+  --syn-support: #445566;
+  --syn-punctuation: #555555;
+  --syn-operator: #770000;
 }
 
 html, body {
@@ -160,6 +190,25 @@ html, body {
   background: none;
   padding: 0;
 }
+/* Syntax highlighting (syntect class-based output) */
+#viewer-content pre.syntax-highlight { line-height: 1.5; }
+#viewer-content .syn-comment { color: var(--syn-comment); font-style: italic; }
+#viewer-content .syn-keyword { color: var(--syn-keyword); font-weight: bold; }
+#viewer-content .syn-storage { color: var(--syn-storage); font-weight: bold; }
+#viewer-content .syn-string { color: var(--syn-string); }
+#viewer-content .syn-constant { color: var(--syn-constant); }
+#viewer-content .syn-entity { color: var(--syn-entity); }
+#viewer-content .syn-variable { color: var(--syn-variable); }
+#viewer-content .syn-support { color: var(--syn-support); }
+#viewer-content .syn-punctuation { color: var(--syn-punctuation); }
+
+/* eink: use weight/style instead of color for differentiation */
+.theme-eink #viewer-content .syn-keyword { font-weight: bold; }
+.theme-eink #viewer-content .syn-storage { font-weight: bold; }
+.theme-eink #viewer-content .syn-comment { font-style: italic; font-weight: normal; }
+.theme-eink #viewer-content .syn-string { font-style: normal; }
+.theme-eink #viewer-content .syn-entity { text-decoration: underline; }
+
 #viewer-content blockquote {
   border-left: 3px solid var(--border);
   padding-left: 16px;
