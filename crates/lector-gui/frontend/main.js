@@ -116,6 +116,7 @@ async function openFile(path) {
   currentFile = path;
   document.getElementById('viewer-header').textContent = response.filename;
   document.getElementById('viewer-content').innerHTML = response.html;
+  document.title = 'Lector - ' + response.relative_path;
 
   // Restore saved scroll position
   const saved = await invoke('load_position', { path });
@@ -137,6 +138,7 @@ function closeFile() {
   document.getElementById('viewer-header').textContent = '';
   document.getElementById('viewer-content').innerHTML =
     '<p class="placeholder">Open a file from the tree to start reading.</p>';
+  document.title = 'Lector';
   loadTree();
 }
 
@@ -146,6 +148,7 @@ async function reloadFile() {
     const scrollPos = document.getElementById('viewer-content').scrollTop;
     document.getElementById('viewer-header').textContent = result.filename;
     document.getElementById('viewer-content').innerHTML = result.html;
+    document.title = 'Lector - ' + result.relative_path;
     document.getElementById('viewer-content').scrollTop = scrollPos;
     showToast('Reloaded');
   }
@@ -190,6 +193,7 @@ async function handleOpenPath(path) {
       currentFile = result.path || path;
       document.getElementById('viewer-header').textContent = result.filename;
       document.getElementById('viewer-content').innerHTML = result.html;
+      document.title = 'Lector - ' + result.relative_path;
       document.getElementById('viewer-content').scrollTop = 0;
       focusedPane = 'viewer';
     } else {
@@ -198,6 +202,7 @@ async function handleOpenPath(path) {
       document.getElementById('viewer-header').textContent = '';
       document.getElementById('viewer-content').innerHTML =
         '<p class="placeholder">Open a file from the tree to start reading.</p>';
+      document.title = 'Lector';
     }
     await loadTree();
     treeCursor = 0;

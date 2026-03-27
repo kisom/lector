@@ -54,6 +54,24 @@ struct DocumentResponse {
     html: String,
     filename: String,
     format: String,
+    relative_path: String,
+}
+
+/// Compute a display path like "project/docs/file.md" for the window title.
+/// Uses the tree root's directory name as the prefix.
+fn display_relative_path(file_path: &std::path::Path, tree_root: &std::path::Path) -> String {
+    let root_name = tree_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if let Ok(rel) = file_path.strip_prefix(tree_root) {
+        format!("{}/{}", root_name, rel.display())
+    } else {
+        file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
 }
 
 // -- Tauri commands --
@@ -113,6 +131,7 @@ fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<D
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let format = format!("{:?}", doc.format);
+    let relative_path = display_relative_path(&file_path, &state.file_tree.path);
 
     state.current_file = Some(file_path);
 
@@ -120,6 +139,7 @@ fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<D
         html,
         filename,
         format,
+        relative_path,
     })
 }
 
@@ -136,7 +156,8 @@ fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<Docume
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let format = format!("{:?}", doc.format);
-    Ok(Some(DocumentResponse { html, filename, format }))
+    let relative_path = display_relative_path(file_path, &state.file_tree.path);
+    Ok(Some(DocumentResponse { html, filename, format, relative_path }))
 }
 
 /// Set a new tree root. If path is a file, uses its parent directory.
@@ -226,8 +247,9 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let format = format!("{:?}", doc.format);
+            let relative_path = display_relative_path(&readme_path, &state.file_tree.path);
             state.current_file = Some(readme_path);
-            return Ok(Some(DocumentResponse { html, filename, format }));
+            return Ok(Some(DocumentResponse { html, filename, format, relative_path }));
         }
 
         state.current_file = None;
@@ -256,8 +278,9 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             resync_watcher(&mut state);
         }
 
+        let relative_path = display_relative_path(&file_path, &state.file_tree.path);
         state.current_file = Some(file_path);
-        Ok(Some(DocumentResponse { html, filename, format }))
+        Ok(Some(DocumentResponse { html, filename, format, relative_path }))
     } else {
         Err(format!("Path not found: {}", file_path.display()))
     }
