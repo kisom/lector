@@ -685,7 +685,6 @@ document.addEventListener('keydown', (e) => {
   if (pendingPrefix === 'x') {
     pendingPrefix = null;
     if (e.ctrlKey && e.key === 'f') { showOpenBar(); e.preventDefault(); return; }
-    if (e.ctrlKey && e.key === 'a') { showAnnotationsList(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'd') { setTreeRootFromCursor(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 't') { toggleToc(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'm') { cycleTocMode(); e.preventDefault(); return; }
@@ -904,6 +903,7 @@ async function saveAnnotation(comment) {
     });
     showToast('Annotation saved');
     await applyAnnotations();
+    if (showToc) await refreshToc();
   } catch (err) {
     showToast('Error: ' + err);
   }
@@ -1003,24 +1003,6 @@ async function applyAnnotations() {
   }
 }
 
-async function showAnnotationsList() {
-  // Ensure ToC is visible
-  if (!showToc) {
-    await toggleToc();
-  }
-  // Refresh to ensure annotations are loaded
-  await refreshToc();
-  // Find the first annotation entry and move cursor there
-  const annotIdx = tocEntries.findIndex(e => e.type === 'annotation');
-  if (annotIdx >= 0) {
-    tocCursor = annotIdx;
-    focusedPane = 'toc';
-    renderToc();
-    renderTree();
-  } else {
-    showToast('No annotations for this file');
-  }
-}
 
 document.getElementById('annotation-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
