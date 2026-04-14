@@ -239,6 +239,20 @@ html, body {
   background: none;
   padding: 0;
 }
+/* Line numbers (toggled via .line-numbers class on #viewer-content) */
+#viewer-content pre .line { display: block; }
+#viewer-content pre .line::before {
+  content: attr(data-ln);
+  display: none;
+  width: 3.5em;
+  margin-right: 1em;
+  text-align: right;
+  color: var(--fg-dim);
+  user-select: none;
+  opacity: 0.5;
+}
+#viewer-content.line-numbers pre .line::before { display: inline-block; }
+
 /* Syntax highlighting (syntect class-based output) */
 #viewer-content pre.syntax-highlight { line-height: 1.5; }
 #viewer-content .syn-comment { color: var(--syn-comment); font-style: italic; }

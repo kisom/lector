@@ -12,6 +12,7 @@ let tocReplace = false; // resolved mode: true = replace tree, false = side pane
 let pendingPrefix = null;
 let currentFile = null;
 let fontSize = 16;
+let lineNumbers = false;
 let tocEntries = [];
 let tocCursor = 0;
 
@@ -26,6 +27,8 @@ async function init() {
   if (config.ui.toc_replace) {
     tocMode = 'replace';
   }
+  lineNumbers = config.ui.line_numbers || false;
+  applyLineNumbers();
   resolveTocMode();
 
   const version = await invoke('get_version');
@@ -434,6 +437,17 @@ async function resetFontSize() {
   applyFontSize();
 }
 
+// Line numbers
+function applyLineNumbers() {
+  document.getElementById('viewer-content').classList.toggle('line-numbers', lineNumbers);
+}
+
+async function toggleLineNumbers() {
+  lineNumbers = await invoke('toggle_line_numbers');
+  applyLineNumbers();
+  showToast('Line numbers: ' + (lineNumbers ? 'on' : 'off'));
+}
+
 // Toggle tree pane
 function toggleTreePane() {
   showTree = !showTree;
@@ -747,6 +761,9 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault(); return;
       case 't':
         toggleTreePane();
+        e.preventDefault(); return;
+      case 'l':
+        toggleLineNumbers();
         e.preventDefault(); return;
       case '=':
       case '+':

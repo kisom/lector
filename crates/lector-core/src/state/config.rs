@@ -20,6 +20,8 @@ pub struct UiConfig {
     pub theme: String,
     /// If true, ToC always replaces the tree pane instead of using a third column
     pub toc_replace: bool,
+    /// If true, show line numbers in source code files
+    pub line_numbers: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +51,7 @@ impl Default for UiConfig {
             tree_width_ratio: 0.25,
             theme: "nord".to_string(),
             toc_replace: false,
+            line_numbers: false,
         }
     }
 }

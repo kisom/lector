@@ -400,6 +400,13 @@ fn cycle_theme(state: tauri::State<'_, Mutex<AppState>>) -> String {
 }
 
 #[tauri::command]
+fn toggle_line_numbers(state: tauri::State<'_, Mutex<AppState>>) -> bool {
+    let mut state = state.lock().unwrap();
+    state.config.ui.line_numbers = !state.config.ui.line_numbers;
+    state.config.ui.line_numbers
+}
+
+#[tauri::command]
 fn adjust_font_size(delta: f32, state: tauri::State<'_, Mutex<AppState>>) -> f32 {
     let mut state = state.lock().unwrap();
     if delta > 0.0 {
@@ -704,11 +711,29 @@ fn render_plain(doc: &Document, path: &std::path::Path) -> String {
         let _ = gen.parse_html_for_line_which_includes_newline(line);
     }
     let highlighted = gen.finalize();
-    format!("<pre class=\"syntax-highlight\"><code>{highlighted}</code></pre>")
+    let numbered = wrap_lines_with_numbers(&highlighted);
+    format!("<pre class=\"syntax-highlight\"><code>{numbered}</code></pre>")
 }
 
 fn html_pre(source: &str) -> String {
-    format!("<pre><code>{}</code></pre>", html_escape(source))
+    let escaped = html_escape(source);
+    let numbered = wrap_lines_with_numbers(&escaped);
+    format!("<pre><code>{numbered}</code></pre>")
+}
+
+/// Wrap each line of HTML content in a `<span class="line">` with a `data-ln` attribute
+/// for CSS-driven line number display.
+fn wrap_lines_with_numbers(html: &str) -> String {
+    let mut result = String::with_capacity(html.len() + html.len() / 4);
+    for (i, line) in html.split('\n').enumerate() {
+        if i > 0 {
+            result.push('\n');
+        }
+        result.push_str(&format!("<span class=\"line\" data-ln=\"{}\">", i + 1));
+        result.push_str(line);
+        result.push_str("</span>");
+    }
+    result
 }
 
 
@@ -825,6 +850,7 @@ fn main() {
             get_version,
             get_config,
             cycle_theme,
+            toggle_line_numbers,
             adjust_font_size,
             save_position,
             load_position,
