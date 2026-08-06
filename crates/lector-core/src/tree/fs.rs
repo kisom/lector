@@ -5,8 +5,10 @@ use ignore::WalkBuilder;
 use super::TreeNode;
 
 /// Scan a directory tree, respecting .gitignore rules.
+///
+/// When `show_hidden` is true, entries whose names begin with `.` are included.
 /// Returns the root TreeNode representing the directory.
-pub fn scan_directory(root: &Path) -> TreeNode {
+pub fn scan_directory(root: &Path, show_hidden: bool) -> TreeNode {
     let mut root_node = TreeNode::directory(
         root.file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -16,11 +18,11 @@ pub fn scan_directory(root: &Path) -> TreeNode {
     );
     root_node.set_expanded(true);
 
-    populate_children(&mut root_node, root);
+    populate_children(&mut root_node, root, show_hidden);
     root_node
 }
 
-fn populate_children(node: &mut TreeNode, dir: &Path) {
+fn populate_children(node: &mut TreeNode, dir: &Path, show_hidden: bool) {
     let Some(children) = node.children_mut() else { return };
 
     let mut dirs: Vec<TreeNode> = Vec::new();
@@ -30,7 +32,7 @@ fn populate_children(node: &mut TreeNode, dir: &Path) {
     // max_depth(1) gives us only immediate children.
     let walker = WalkBuilder::new(dir)
         .max_depth(Some(1))
-        .hidden(true) // skip hidden files
+        .hidden(!show_hidden)
         .sort_by_file_name(|a, b| a.cmp(b))
         .build();
 
@@ -61,27 +63,27 @@ fn populate_children(node: &mut TreeNode, dir: &Path) {
 }
 
 /// Populate a directory node's children if they haven't been loaded yet.
-fn ensure_populated(node: &mut TreeNode) {
+fn ensure_populated(node: &mut TreeNode, show_hidden: bool) {
     if let super::NodeKind::Directory { children, .. } = &node.kind {
         if children.is_empty() {
             let dir = node.path.clone();
-            populate_children(node, &dir);
+            populate_children(node, &dir, show_hidden);
         }
     }
 }
 
 /// Toggle a directory at the given path, lazily populating children when expanding.
-pub fn toggle_at_path_lazy(tree: &mut TreeNode, target: &Path) -> bool {
+pub fn toggle_at_path_lazy(tree: &mut TreeNode, target: &Path, show_hidden: bool) -> bool {
     if tree.path == target {
         tree.toggle_expanded();
         if tree.is_expanded() {
-            ensure_populated(tree);
+            ensure_populated(tree, show_hidden);
         }
         return true;
     }
     if let super::NodeKind::Directory { children, .. } = &mut tree.kind {
         for child in children.iter_mut() {
-            if toggle_at_path_lazy(child, target) {
+            if toggle_at_path_lazy(child, target, show_hidden) {
                 return true;
             }
         }
@@ -90,14 +92,14 @@ pub fn toggle_at_path_lazy(tree: &mut TreeNode, target: &Path) -> bool {
 }
 
 /// Expand all directories along a path, lazily populating children as needed.
-pub fn expand_to_path_lazy(tree: &mut TreeNode, target: &Path) {
+pub fn expand_to_path_lazy(tree: &mut TreeNode, target: &Path, show_hidden: bool) {
     if target.starts_with(&tree.path) {
         tree.set_expanded(true);
-        ensure_populated(tree);
+        ensure_populated(tree, show_hidden);
         if let Some(children) = tree.children_mut() {
             for child in children.iter_mut() {
                 if target.starts_with(&child.path) {
-                    expand_to_path_lazy(child, target);
+                    expand_to_path_lazy(child, target, show_hidden);
                 }
             }
         }
@@ -123,7 +125,7 @@ fn find_node_mut<'a>(node: &'a mut super::TreeNode, target: &Path) -> Option<&'a
 
 /// Re-scan a single directory's children, preserving expansion state of subdirectories.
 /// Returns true if the directory was found and refreshed.
-pub fn refresh_directory(tree: &mut super::TreeNode, target_dir: &Path) -> bool {
+pub fn refresh_directory(tree: &mut super::TreeNode, target_dir: &Path, show_hidden: bool) -> bool {
     let Some(node) = find_node_mut(tree, target_dir) else {
         return false;
     };
@@ -140,14 +142,14 @@ pub fn refresh_directory(tree: &mut super::TreeNode, target_dir: &Path) -> bool 
 
     // Re-scan children from disk
     let dir = node.path.clone();
-    populate_children(node, &dir);
+    populate_children(node, &dir, show_hidden);
 
     // Restore expansion state
     if let super::NodeKind::Directory { children, .. } = &mut node.kind {
         for child in children.iter_mut() {
             if expanded.contains(&child.path) {
                 child.set_expanded(true);
-                ensure_populated(child);
+                ensure_populated(child, show_hidden);
             }
         }
     }
@@ -185,13 +187,14 @@ pub fn toggle_at_path_watched(
     tree: &mut super::TreeNode,
     target: &Path,
     handle: &mut super::watch::WatcherHandle,
+    show_hidden: bool,
 ) -> bool {
     // Collect expanded children before toggle (for unwatch on collapse)
     let previously_expanded = find_node_mut(tree, target)
         .map(|n| collect_expanded_dirs(n))
         .unwrap_or_default();
 
-    if !toggle_at_path_lazy(tree, target) {
+    if !toggle_at_path_lazy(tree, target, show_hidden) {
         return false;
     }
 
@@ -244,7 +247,7 @@ mod tests {
         fs::create_dir(root.join("docs")).unwrap();
         fs::write(root.join("docs/guide.md"), "Guide").unwrap();
 
-        let tree = scan_directory(root);
+        let tree = scan_directory(root, false);
         assert!(tree.is_dir());
         assert!(tree.is_expanded());
 
@@ -268,11 +271,29 @@ mod tests {
         fs::write(root.join("visible.md"), "Hello").unwrap();
         fs::write(root.join("ignored.md"), "Secret").unwrap();
 
-        let tree = scan_directory(root);
+        let tree = scan_directory(root, false);
         let children = tree.children().unwrap();
 
         let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"visible.md"));
         assert!(!names.contains(&"ignored.md"));
+    }
+
+    #[test]
+    fn includes_hidden_entries_when_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        fs::create_dir(root.join(".config")).unwrap();
+        fs::write(root.join(".config/settings.md"), "Settings").unwrap();
+
+        let hidden_tree = scan_directory(root, false);
+        let visible_tree = scan_directory(root, true);
+
+        assert!(hidden_tree.children().unwrap().is_empty());
+        let children = visible_tree.children().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, ".config");
+        assert!(children[0].is_dir());
     }
 }

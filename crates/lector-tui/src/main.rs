@@ -43,6 +43,7 @@ struct App {
     viewer_height: usize,
     show_help: bool,
     show_tree: bool,
+    show_hidden: bool,
     show_toc: bool,
     toc_headings: Vec<render::TocHeading>,
     toc_cursor: usize,
@@ -62,7 +63,7 @@ impl App {
 
         let root = tree::resolve_root(path.as_deref());
 
-        let mut file_tree = tree_fs::scan_directory(&root);
+        let mut file_tree = tree_fs::scan_directory(&root, false);
 
         let file_to_open = match &path {
             Some(p) if p.is_file() => Some(p.clone()),
@@ -70,7 +71,7 @@ impl App {
         };
 
         if let Some(ref p) = file_to_open {
-            tree_fs::expand_to_path_lazy(&mut file_tree, p);
+            tree_fs::expand_to_path_lazy(&mut file_tree, p, false);
         }
 
         let (document, rendered_lines, toc_headings, current_file) = match file_to_open {
@@ -118,6 +119,7 @@ impl App {
             viewer_height: 24,
             show_help: false,
             show_tree: true,
+            show_hidden: false,
             show_toc: false,
             toc_headings,
             toc_cursor: 0,
@@ -330,7 +332,7 @@ impl App {
                 if self.focus == FocusedPane::Tree {
                     // Refresh tree
                     let root = self.file_tree.path.clone();
-                    self.file_tree = tree_fs::scan_directory(&root);
+                    self.file_tree = tree_fs::scan_directory(&root, self.show_hidden);
                     self.resync_watcher();
                 } else if let Some(ref path) = self.current_file {
                     // Reload document
@@ -383,14 +385,21 @@ impl App {
                         entry.node.path.parent().unwrap_or(&entry.node.path).to_path_buf()
                     };
                     let root = lector_core::tree::git::find_git_root(&dir).unwrap_or(dir);
-                    self.file_tree = tree_fs::scan_directory(&root);
+                    self.file_tree = tree_fs::scan_directory(&root, self.show_hidden);
                     self.tree_cursor = 0;
                     if let Some(ref cf) = self.current_file {
                         if cf.starts_with(&root) {
-                            tree_fs::expand_to_path_lazy(&mut self.file_tree, cf);
+                            tree_fs::expand_to_path_lazy(&mut self.file_tree, cf, self.show_hidden);
                         }
                     }
                 }
+            }
+            Action::ToggleHidden => {
+                self.show_hidden = !self.show_hidden;
+                let root = self.file_tree.path.clone();
+                self.file_tree = tree_fs::scan_directory(&root, self.show_hidden);
+                self.tree_cursor = 0;
+                self.resync_watcher();
             }
             Action::ToggleToc => {
                 self.show_toc = !self.show_toc;
@@ -487,10 +496,11 @@ impl App {
     }
 
     fn toggle_dir(&mut self, path: &std::path::Path) {
+        let show_hidden = self.show_hidden;
         if let Some(ref mut handle) = self.watcher_handle {
-            tree_fs::toggle_at_path_watched(&mut self.file_tree, path, handle);
+            tree_fs::toggle_at_path_watched(&mut self.file_tree, path, handle, show_hidden);
         } else {
-            tree_fs::toggle_at_path_lazy(&mut self.file_tree, path);
+            tree_fs::toggle_at_path_lazy(&mut self.file_tree, path, show_hidden);
         }
     }
 
@@ -818,6 +828,7 @@ impl App {
             ("C-m", "Annotate current line"),
             ("C-x C-a", "List annotations"),
             ("C-x C-d", "Set tree root"),
+            ("C-x C-h", "Toggle hidden tree entries"),
             ("C-x C-t", "Toggle table of contents"),
             ("C-x C-m", "Cycle ToC mode"),
             ("C-t", "Toggle tree pane"),
@@ -959,8 +970,9 @@ fn main() -> io::Result<()> {
         // Poll file watcher for tree updates
         if let (Some(handle), Some(rx)) = (&app.watcher_handle, &app.watcher_rx) {
             let changed = tree_watch::drain_events(rx, &handle.watched_dirs);
+            let show_hidden = app.show_hidden;
             for dir in changed {
-                tree_fs::refresh_directory(&mut app.file_tree, &dir);
+                tree_fs::refresh_directory(&mut app.file_tree, &dir, show_hidden);
             }
         }
     }

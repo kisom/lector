@@ -32,6 +32,7 @@ struct AppState {
     current_file: Option<PathBuf>,
     initial_path: Option<PathBuf>,
     watcher: Option<tree_watch::WatcherHandle>,
+    show_hidden: bool,
 }
 
 #[derive(Serialize)]
@@ -74,16 +75,7 @@ fn display_relative_path(file_path: &std::path::Path, tree_root: &std::path::Pat
     }
 }
 
-// -- Tauri commands --
-
-#[tauri::command]
-fn get_initial_path(state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
-    state.lock().unwrap().initial_path.as_ref().map(|p| p.to_string_lossy().into_owned())
-}
-
-#[tauri::command]
-fn get_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
-    let state = state.lock().unwrap();
+fn tree_response(state: &AppState) -> TreeResponse {
     let flat = state.file_tree.flatten(0);
     let entries = flat
         .iter()
@@ -102,15 +94,29 @@ fn get_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     TreeResponse { entries }
 }
 
+// -- Tauri commands --
+
+#[tauri::command]
+fn get_initial_path(state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
+    state.lock().unwrap().initial_path.as_ref().map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn get_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
+    let state = state.lock().unwrap();
+    tree_response(&state)
+}
+
 #[tauri::command]
 fn toggle_dir(path: String, state: tauri::State<'_, Mutex<AppState>>) {
     let mut state = state.lock().unwrap();
     let path = PathBuf::from(&path);
+    let show_hidden = state.show_hidden;
     if let Some(mut watcher) = state.watcher.take() {
-        tree_fs::toggle_at_path_watched(&mut state.file_tree, &path, &mut watcher);
+        tree_fs::toggle_at_path_watched(&mut state.file_tree, &path, &mut watcher, show_hidden);
         state.watcher = Some(watcher);
     } else {
-        tree_fs::toggle_at_path_lazy(&mut state.file_tree, &path);
+        tree_fs::toggle_at_path_lazy(&mut state.file_tree, &path, show_hidden);
     }
 }
 
@@ -172,11 +178,11 @@ fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Tree
         target.parent().unwrap_or(&target).to_path_buf()
     };
     let root = git::find_git_root(&dir).unwrap_or(dir);
-    state.file_tree = tree_fs::scan_directory(&root);
+    state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
     // Expand to current file if it's under the new root
     if let Some(cf) = state.current_file.clone() {
         if cf.starts_with(&root) {
-            tree_fs::expand_to_path_lazy(&mut state.file_tree, &cf);
+            tree_fs::expand_to_path_lazy(&mut state.file_tree, &cf, state.show_hidden);
         }
     }
     resync_watcher(&mut state);
@@ -202,7 +208,7 @@ fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Tree
 fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     let mut state = state.lock().unwrap();
     let root = state.file_tree.path.clone();
-    state.file_tree = tree_fs::scan_directory(&root);
+    state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
     resync_watcher(&mut state);
     let flat = state.file_tree.flatten(0);
     let entries = flat
@@ -222,6 +228,17 @@ fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     TreeResponse { entries }
 }
 
+/// Toggle whether hidden filesystem entries are displayed in the tree.
+#[tauri::command]
+fn toggle_hidden(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
+    let mut state = state.lock().unwrap();
+    state.show_hidden = !state.show_hidden;
+    let root = state.file_tree.path.clone();
+    state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
+    resync_watcher(&mut state);
+    tree_response(&state)
+}
+
 /// Open a path — if it's a file, open in viewer; if a directory, change tree root.
 #[tauri::command]
 fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<DocumentResponse>, String> {
@@ -234,7 +251,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
     if file_path.is_dir() {
         // Use git root if available
         let root = git::find_git_root(&file_path).unwrap_or(file_path);
-        state.file_tree = tree_fs::scan_directory(&root);
+        state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
         resync_watcher(&mut state);
 
         // Look for a README in the root
@@ -273,8 +290,8 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             .or_else(|| file_path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| file_path.clone());
         if new_root != state.file_tree.path {
-            state.file_tree = tree_fs::scan_directory(&new_root);
-            tree_fs::expand_to_path_lazy(&mut state.file_tree, &file_path);
+            state.file_tree = tree_fs::scan_directory(&new_root, state.show_hidden);
+            tree_fs::expand_to_path_lazy(&mut state.file_tree, &file_path, state.show_hidden);
             resync_watcher(&mut state);
         }
 
@@ -802,9 +819,9 @@ fn main() {
 
     let root = tree::resolve_root(path.as_deref());
 
-    let mut file_tree = tree_fs::scan_directory(&root);
+    let mut file_tree = tree_fs::scan_directory(&root, false);
     if let Some(ref p) = path {
-        tree_fs::expand_to_path_lazy(&mut file_tree, p);
+        tree_fs::expand_to_path_lazy(&mut file_tree, p, false);
     }
 
     // Set up file watcher for expanded directories
@@ -827,6 +844,7 @@ fn main() {
         current_file: None,
         initial_path,
         watcher,
+        show_hidden: false,
     };
 
     tauri::Builder::default()
@@ -839,6 +857,7 @@ fn main() {
             open_path,
             reload_file,
             refresh_tree,
+            toggle_hidden,
             set_tree_root,
             complete_path,
             browse_directory,
@@ -895,8 +914,13 @@ fn main() {
                                 if changed.is_empty() {
                                     continue;
                                 }
+                                let show_hidden = state.show_hidden;
                                 for dir in changed {
-                                    tree_fs::refresh_directory(&mut state.file_tree, &dir);
+                                    tree_fs::refresh_directory(
+                                        &mut state.file_tree,
+                                        &dir,
+                                        show_hidden,
+                                    );
                                 }
                                 drop(state);
                                 let _ = app_handle.emit("tree-changed", ());
@@ -912,4 +936,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

@@ -174,6 +174,13 @@ async function refreshTree() {
   showToast('Tree refreshed');
 }
 
+async function toggleHidden() {
+  const response = await invoke('toggle_hidden');
+  flatTree = response.entries;
+  treeCursor = 0;
+  renderTree();
+}
+
 // Open path bar (C-x C-f) with tab completion
 function showOpenBar() {
   const bar = document.getElementById('open-bar');
@@ -667,7 +674,7 @@ document.addEventListener('keydown', (e) => {
   }
 
   // C-h toggles help even when help is visible
-  if (e.ctrlKey && e.key === 'h') { toggleHelp(); e.preventDefault(); return; }
+  if (e.ctrlKey && e.key === 'h' && pendingPrefix !== 'x') { toggleHelp(); e.preventDefault(); return; }
 
   // Block other keys when help is visible
   if (helpVisible) return;
@@ -700,6 +707,7 @@ document.addEventListener('keydown', (e) => {
     pendingPrefix = null;
     if (e.ctrlKey && e.key === 'f') { showOpenBar(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'd') { setTreeRootFromCursor(); e.preventDefault(); return; }
+    if (e.ctrlKey && e.key === 'h') { toggleHidden(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 't') { toggleToc(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'm') { cycleTocMode(); e.preventDefault(); return; }
     if (e.ctrlKey && e.key === 'c') { saveCurrentPosition().then(() => invoke('quit')); e.preventDefault(); return; }

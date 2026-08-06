@@ -16,6 +16,7 @@ pub enum Action {
     TreeCollapse,
     TreeSelect,
     TreeSetRoot,
+    ToggleHidden,
 
     // Pane management
     ToggleFocus,
@@ -137,6 +138,8 @@ impl KeyMapper {
             ("x", true, "a") => Some(Action::ListAnnotations),
             // C-x C-d → set selected directory as tree root
             ("x", true, "d") => Some(Action::TreeSetRoot),
+            // C-x C-h → toggle hidden entries in the tree
+            ("x", true, "h") => Some(Action::ToggleHidden),
             // C-x C-t → toggle table of contents
             ("x", true, "t") => Some(Action::ToggleToc),
             // C-x C-m → cycle ToC mode (side panel vs replace tree)
@@ -325,6 +328,18 @@ mod tests {
         assert_eq!(
             mapper.process("c", ctrl(), focus),
             Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn chord_cx_ch_toggles_hidden_entries() {
+        let mut mapper = KeyMapper::new();
+        let focus = FocusedPane::Tree;
+
+        assert_eq!(mapper.process("x", ctrl(), focus), None);
+        assert_eq!(
+            mapper.process("h", ctrl(), focus),
+            Some(Action::ToggleHidden)
         );
     }
 
