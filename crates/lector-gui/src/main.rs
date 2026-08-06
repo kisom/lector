@@ -171,6 +171,7 @@ fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<Docume
 #[tauri::command]
 fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     let mut state = state.lock().unwrap();
+    let show_hidden = state.show_hidden;
     let target = PathBuf::from(&path);
     let dir = if target.is_dir() {
         target
@@ -178,11 +179,11 @@ fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Tree
         target.parent().unwrap_or(&target).to_path_buf()
     };
     let root = git::find_git_root(&dir).unwrap_or(dir);
-    state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
+    state.file_tree = tree_fs::scan_directory(&root, show_hidden);
     // Expand to current file if it's under the new root
     if let Some(cf) = state.current_file.clone() {
         if cf.starts_with(&root) {
-            tree_fs::expand_to_path_lazy(&mut state.file_tree, &cf, state.show_hidden);
+            tree_fs::expand_to_path_lazy(&mut state.file_tree, &cf, show_hidden);
         }
     }
     resync_watcher(&mut state);
@@ -207,8 +208,9 @@ fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Tree
 #[tauri::command]
 fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     let mut state = state.lock().unwrap();
+    let show_hidden = state.show_hidden;
     let root = state.file_tree.path.clone();
-    state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
+    state.file_tree = tree_fs::scan_directory(&root, show_hidden);
     resync_watcher(&mut state);
     let flat = state.file_tree.flatten(0);
     let entries = flat
@@ -247,11 +249,12 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
     let file_path = std::fs::canonicalize(&file_path).unwrap_or(file_path);
 
     let mut state = state.lock().unwrap();
+    let show_hidden = state.show_hidden;
 
     if file_path.is_dir() {
         // Use git root if available
         let root = git::find_git_root(&file_path).unwrap_or(file_path);
-        state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
+        state.file_tree = tree_fs::scan_directory(&root, show_hidden);
         resync_watcher(&mut state);
 
         // Look for a README in the root
@@ -290,8 +293,8 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             .or_else(|| file_path.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| file_path.clone());
         if new_root != state.file_tree.path {
-            state.file_tree = tree_fs::scan_directory(&new_root, state.show_hidden);
-            tree_fs::expand_to_path_lazy(&mut state.file_tree, &file_path, state.show_hidden);
+            state.file_tree = tree_fs::scan_directory(&new_root, show_hidden);
+            tree_fs::expand_to_path_lazy(&mut state.file_tree, &file_path, show_hidden);
             resync_watcher(&mut state);
         }
 
