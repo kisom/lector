@@ -6,7 +6,8 @@ use super::TreeNode;
 
 /// Scan a directory tree, respecting .gitignore rules.
 ///
-/// When `show_hidden` is true, entries whose names begin with `.` are included.
+/// When `show_hidden` is true, entries whose names begin with `.` and entries
+/// ignored by Git are included.
 /// Returns the root TreeNode representing the directory.
 pub fn scan_directory(root: &Path, show_hidden: bool) -> TreeNode {
     let mut root_node = TreeNode::directory(
@@ -28,11 +29,12 @@ fn populate_children(node: &mut TreeNode, dir: &Path, show_hidden: bool) {
     let mut dirs: Vec<TreeNode> = Vec::new();
     let mut files: Vec<TreeNode> = Vec::new();
 
-    // Use ignore crate's WalkBuilder for gitignore-aware traversal.
+    // Use ignore crate's WalkBuilder for gitignore-aware traversal by default.
     // max_depth(1) gives us only immediate children.
     let walker = WalkBuilder::new(dir)
         .max_depth(Some(1))
         .hidden(!show_hidden)
+        .git_ignore(!show_hidden)
         .sort_by_file_name(|a, b| a.cmp(b))
         .build();
 
@@ -277,6 +279,15 @@ mod tests {
         let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"visible.md"));
         assert!(!names.contains(&"ignored.md"));
+
+        let unfiltered_tree = scan_directory(root, true);
+        let unfiltered_names: Vec<&str> = unfiltered_tree
+            .children()
+            .unwrap()
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(unfiltered_names.contains(&"ignored.md"));
     }
 
     #[test]
