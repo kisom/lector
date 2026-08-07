@@ -105,7 +105,7 @@ jobs:
         run: |
           echo "tag-name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - uses: mislav/bump-homebrew-formula-action@v3
+      - uses: mislav/bump-homebrew-formula-action@v4
         with:
           formula-name: lector
           formula-path: Formula/lector.rb
