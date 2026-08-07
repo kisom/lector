@@ -1,4 +1,5 @@
 pub mod markdown;
+pub mod outline;
 
 use std::path::Path;
 

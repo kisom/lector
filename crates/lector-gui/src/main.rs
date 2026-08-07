@@ -10,7 +10,7 @@ use serde::Serialize;
 use syntect::html::{ClassStyle, ClassedHTMLGenerator};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use lector_core::document::{markdown, Document, Format};
+use lector_core::document::{markdown, outline, Document, Format};
 use lector_core::state::annotations::{Annotation, AnnotationStore};
 use lector_core::state::config::Config;
 use lector_core::state::position::PositionStore;
@@ -482,6 +482,21 @@ fn get_headings(state: tauri::State<'_, Mutex<AppState>>) -> Vec<TocEntry> {
     let Ok(doc) = Document::load(file) else {
         return Vec::new();
     };
+    // For plain source files, build the ToC from code definitions instead of
+    // HTML headings (which don't exist). Each entry links to its line anchor.
+    if doc.format == Format::Plain {
+        let entries = outline::outline_for_path(file, &doc.source);
+        if !entries.is_empty() {
+            return entries
+                .into_iter()
+                .map(|e| TocEntry {
+                    level: e.level,
+                    text: e.name,
+                    id: format!("line-{}", e.line),
+                })
+                .collect();
+        }
+    }
     let html = render_to_html(&doc, file);
     extract_headings(&html)
 }
@@ -749,7 +764,11 @@ fn wrap_lines_with_numbers(html: &str) -> String {
         if i > 0 {
             result.push('\n');
         }
-        result.push_str(&format!("<span class=\"line\" data-ln=\"{}\">", i + 1));
+        result.push_str(&format!(
+            "<span class=\"line\" id=\"line-{}\" data-ln=\"{}\">",
+            i + 1,
+            i + 1
+        ));
         result.push_str(line);
         result.push_str("</span>");
     }

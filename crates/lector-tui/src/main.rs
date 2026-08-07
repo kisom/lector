@@ -9,7 +9,7 @@ use crossterm::execute;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
-use lector_core::document::{Document, Format};
+use lector_core::document::{outline, Document, Format};
 use lector_core::nav::{Action, FocusedPane, KeyMapper, Modifiers};
 use lector_core::state::annotations::AnnotationStore;
 use lector_core::state::config::Config;
@@ -911,13 +911,25 @@ fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>, Vec
                 Format::Markdown => render::render_markdown(&doc.source),
                 Format::OrgMode => render::render_org(&doc.source),
                 Format::ReStructuredText => render::render_rst(&doc.source),
-                Format::Plain => (
-                    doc.source
+                Format::Plain => {
+                    let lines: Vec<Line<'static>> = doc
+                        .source
                         .lines()
                         .map(|l| Line::raw(l.to_string()))
-                        .collect(),
-                    Vec::new(),
-                ),
+                        .collect();
+                    // Build a ToC from code definitions for supported source files.
+                    // Plain lines map 1:1 to source lines, so line - 1 is the index.
+                    let headings = outline::outline_for_path(path, &doc.source)
+                        .into_iter()
+                        .map(|e| render::TocHeading {
+                            level: e.level,
+                            text: e.name,
+                            line_index: e.line.saturating_sub(1),
+                            is_annotation: false,
+                        })
+                        .collect();
+                    (lines, headings)
+                }
             };
             (doc, lines, headings)
         }
