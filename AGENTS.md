@@ -1,12 +1,39 @@
-# CLAUDE.md
+# lector
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-Lector is a read-only document viewer for rendered markdown, reStructuredText, and org-mode files. It features a tree view pane (~1/4 viewport, left by default, configurable to right), remembers file positions between sessions, and uses emacs-style navigation. It is git-aware: when opening a file, it detects the git root and uses that as the root directory.
+Lector is a read-only document viewer for rendered markdown, reStructuredText, and org-mode files, with a tree-view pane, remembered file positions, emacs-style navigation, and git-aware root detection. Standards: none. The Metacircular service standards do not apply here.
 
 Target platforms: NixOS and macOS. See DESIGN.md for detailed rationale on technology choices.
+
+## Bootstrap (run once per checkout, idempotent)
+nix develop
+
+## Gate (run before saying "done"; must exit 0)
+make gate            # what it runs, in order:
+                      #   nix develop --command cargo build
+                      #   nix develop --command cargo test --workspace
+                      #   nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+                      #   nix develop --command cargo fmt --check
+Fast check while editing: nix develop --command cargo test -p lector-core <test_name>
+
+## Run
+nix develop --command cargo run -p lector-gui -- <file>   # GUI (Tauri)
+nix develop --command cargo run -p lector-tui -- <file>   # TUI (ratatui)
+
+## Sensors the harness watches
+- `make gate` exit status and last 40 lines
+- cargo test summary line; clippy warning count (gate uses `-D warnings`, so any warning fails the gate)
+- cargo fmt --check exit status
+
+## Rules (do not re-litigate)
+- Every cargo command runs inside the nix shell (`nix develop --command cargo ...`).
+- lector release: checkpoint, tag, push; the homebrew tap follows.
+
+## Docs that govern
+- DESIGN.md — rationale for technology choices (Rust, Tauri, ratatui)
+- PROMPT.md — original project prompt/spec
+
+## Remote target
+None: lector is a local desktop/TUI application with no remote deployment target.
 
 ## Technology Decisions
 
@@ -19,24 +46,6 @@ Target platforms: NixOS and macOS. See DESIGN.md for detailed rationale on techn
 
 - `lector` — GUI application (Tauri, from `crates/lector-gui`)
 - `clector` — TUI application (ratatui, from `crates/lector-tui`)
-
-## Build Commands
-
-Rust toolchain is provided via the Nix dev shell. All cargo commands must be run inside it.
-
-```bash
-nix develop                                       # Enter dev shell
-nix develop --command cargo build                  # Build all crates
-nix develop --command cargo test --workspace       # Run all tests
-nix develop --command cargo clippy --workspace     # Lint
-nix develop --command cargo run -p lector-gui -- <file>   # Run GUI
-nix develop --command cargo run -p lector-tui -- <file>   # Run TUI
-```
-
-To run a single test:
-```bash
-nix develop --command cargo test -p lector-core <test_name>
-```
 
 ## Architecture
 
