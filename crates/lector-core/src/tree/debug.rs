@@ -4,7 +4,11 @@ use super::TreeNode;
 pub fn dump_tree(node: &TreeNode, depth: usize) {
     let indent = "  ".repeat(depth);
     let kind = if node.is_dir() {
-        if node.is_expanded() { "▾" } else { "▸" }
+        if node.is_expanded() {
+            "▾"
+        } else {
+            "▸"
+        }
     } else {
         " "
     };

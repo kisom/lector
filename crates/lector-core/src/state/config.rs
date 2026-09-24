@@ -41,7 +41,6 @@ pub struct FontConfig {
     pub step: f32,
 }
 
-
 const THEMES: &[&str] = &["nord", "eink", "tufte"];
 
 impl Default for UiConfig {

@@ -6,15 +6,15 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 use comrak::{markdown_to_html, Options};
-use serde::Serialize;
-use syntect::html::{ClassStyle, ClassedHTMLGenerator};
-use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
 use lector_core::document::{markdown, outline, Document, Format};
 use lector_core::state::annotations::{Annotation, AnnotationStore};
 use lector_core::state::config::Config;
 use lector_core::state::position::PositionStore;
 use lector_core::tree::{self, fs as tree_fs, git, watch as tree_watch, TreeNode};
+use serde::Serialize;
+use syntect::html::{ClassStyle, ClassedHTMLGenerator};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 
 /// Resync the file watcher with the current tree state.
 fn resync_watcher(state: &mut AppState) {
@@ -124,7 +124,12 @@ fn tree_response(state: &AppState) -> TreeResponse {
 
 #[tauri::command]
 fn get_initial_path(state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
-    state.lock().unwrap().initial_path.as_ref().map(|p| p.to_string_lossy().into_owned())
+    state
+        .lock()
+        .unwrap()
+        .initial_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -147,7 +152,10 @@ fn toggle_dir(path: String, state: tauri::State<'_, Mutex<AppState>>) {
 }
 
 #[tauri::command]
-fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<DocumentResponse, String> {
+fn open_file(
+    path: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<DocumentResponse, String> {
     let mut state = state.lock().unwrap();
     // The frontend saves the previous file's scroll position before calling
     // this, so nothing needs to be persisted here.
@@ -155,7 +163,9 @@ fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<D
 }
 
 #[tauri::command]
-fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<DocumentResponse>, String> {
+fn reload_file(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Option<DocumentResponse>, String> {
     let mut state = state.lock().unwrap();
     let Some(file_path) = state.current_file.clone() else {
         return Ok(None);
@@ -216,7 +226,10 @@ fn toggle_hidden(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
 
 /// Open a path — if it's a file, open in viewer; if a directory, change tree root.
 #[tauri::command]
-fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<DocumentResponse>, String> {
+fn open_path(
+    path: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Option<DocumentResponse>, String> {
     let expanded = shellexpand::tilde(&path);
     let file_path = PathBuf::from(expanded.as_ref());
     let file_path = std::fs::canonicalize(&file_path).unwrap_or(file_path);
@@ -294,8 +307,16 @@ fn browse_directory(path: String) -> Vec<BrowseEntry> {
         }
         let full_path = entry.path().to_string_lossy().into_owned();
         let is_dir = entry.path().is_dir();
-        let entry = BrowseEntry { name, path: full_path, is_dir };
-        if is_dir { dirs.push(entry); } else { files.push(entry); }
+        let entry = BrowseEntry {
+            name,
+            path: full_path,
+            is_dir,
+        };
+        if is_dir {
+            dirs.push(entry);
+        } else {
+            files.push(entry);
+        }
     }
 
     dirs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -322,7 +343,10 @@ fn complete_path(input: String) -> Vec<String> {
     let (dir, prefix) = if path.is_dir() && input.ends_with('/') {
         (path, String::new())
     } else {
-        let dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let dir = path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
         let prefix = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -576,12 +600,20 @@ fn save_annotation(
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<i64, String> {
     let state = state.lock().unwrap();
-    let store = state.annotations.as_ref().ok_or("Annotation store not available")?;
+    let store = state
+        .annotations
+        .as_ref()
+        .ok_or("Annotation store not available")?;
     store
         .save(
             std::path::Path::new(&file_path),
-            start_line, start_col, end_line, end_col,
-            &selected_text, &comment, &color,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+            &selected_text,
+            &comment,
+            &color,
         )
         .map_err(|e| e.to_string())
 }
@@ -599,7 +631,10 @@ fn get_annotations(file_path: String, state: tauri::State<'_, Mutex<AppState>>) 
 #[tauri::command]
 fn delete_annotation(id: i64, state: tauri::State<'_, Mutex<AppState>>) -> Result<bool, String> {
     let state = state.lock().unwrap();
-    let store = state.annotations.as_ref().ok_or("Annotation store not available")?;
+    let store = state
+        .annotations
+        .as_ref()
+        .ok_or("Annotation store not available")?;
     store.delete(id).map_err(|e| e.to_string())
 }
 
@@ -608,7 +643,10 @@ fn delete_annotation(id: i64, state: tauri::State<'_, Mutex<AppState>>) -> Resul
 #[tauri::command]
 fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
     let lower = url.to_ascii_lowercase();
-    if ["http://", "https://", "mailto:"].iter().any(|s| lower.starts_with(s)) {
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|s| lower.starts_with(s))
+    {
         let _ = open::that(&url);
         return None;
     }
@@ -624,7 +662,9 @@ fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option
 
     // Absolute file path
     if as_path.is_absolute() {
-        return as_path.exists().then(|| as_path.to_string_lossy().into_owned());
+        return as_path
+            .exists()
+            .then(|| as_path.to_string_lossy().into_owned());
     }
 
     // Relative path — resolve against current file's directory
@@ -696,9 +736,7 @@ fn render_to_html(doc: &Document, path: &std::path::Path) -> String {
             Ok(document) => {
                 let mut buf = Vec::new();
                 match rst_renderer::render_html(&document, &mut buf, false) {
-                    Ok(()) => {
-                        String::from_utf8(buf).unwrap_or_else(|_| html_pre(&doc.source))
-                    }
+                    Ok(()) => String::from_utf8(buf).unwrap_or_else(|_| html_pre(&doc.source)),
                     Err(_) => html_pre(&doc.source),
                 }
             }
@@ -765,7 +803,11 @@ fn wrap_lines_with_numbers(html: &str) -> String {
         if i > 0 {
             result.push('\n');
         }
-        let _ = write!(result, "<span class=\"line\" id=\"line-{0}\" data-ln=\"{0}\">", i + 1);
+        let _ = write!(
+            result,
+            "<span class=\"line\" id=\"line-{0}\" data-ln=\"{0}\">",
+            i + 1
+        );
         for tag in &open_spans {
             result.push_str(tag);
         }
@@ -940,7 +982,9 @@ fn main() {
 
                                 let state: tauri::State<'_, Mutex<AppState>> = app_handle.state();
                                 let mut state = state.lock().unwrap();
-                                let watched = state.watcher.as_ref()
+                                let watched = state
+                                    .watcher
+                                    .as_ref()
                                     .map(|w| w.watched_dirs.clone())
                                     .unwrap_or_default();
 
@@ -972,7 +1016,9 @@ fn main() {
                                 drop(state);
                                 let _ = app_handle.emit("tree-changed", ());
                             }
-                            Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                continue
+                            }
                             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                         }
                     }

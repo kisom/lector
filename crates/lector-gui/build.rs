@@ -3,9 +3,7 @@ fn git_version() -> String {
         .args(["describe", "--tags", "--match", "v*"])
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => "v0.0.0-dev".to_string(),
     }
 }
