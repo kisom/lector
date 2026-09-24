@@ -345,10 +345,19 @@ impl App {
             .map(|e| (e.node.path.clone(), e.node.is_dir(), e.node.is_expanded()))
     }
 
-    /// Keep the tree cursor within the visible entries after the tree shrinks.
-    fn clamp_tree_cursor(&mut self) {
-        let len = self.file_tree.flatten(0).len();
-        self.tree_cursor = self.tree_cursor.min(len.saturating_sub(1));
+    /// Path of the entry under the tree cursor.
+    fn tree_cursor_path(&self) -> Option<PathBuf> {
+        self.tree_entry_at(self.tree_cursor)
+            .map(|(path, _, _)| path)
+    }
+
+    /// After the tree changed, put the cursor back on `prev` (the entry it was
+    /// on before), since rows may have been inserted or removed above it.
+    /// Falls back to clamping when that entry no longer exists.
+    fn reselect_tree_cursor(&mut self, prev: Option<PathBuf>) {
+        let flat = self.file_tree.flatten(0);
+        let found = prev.and_then(|p| flat.iter().position(|e| e.node.path == p));
+        self.tree_cursor = found.unwrap_or(self.tree_cursor.min(flat.len().saturating_sub(1)));
     }
 
     fn handle_action(&mut self, action: Action) {
@@ -374,8 +383,9 @@ impl App {
             Action::ReloadFile => {
                 if self.focus == FocusedPane::Tree {
                     // Refresh tree, keeping expanded directories open
+                    let prev = self.tree_cursor_path();
                     tree_fs::rescan_tree(&mut self.file_tree, self.show_hidden);
-                    self.clamp_tree_cursor();
+                    self.reselect_tree_cursor(prev);
                     self.resync_watcher();
                 } else if let Some(ref path) = self.current_file {
                     // Reload document
@@ -427,6 +437,7 @@ impl App {
             }
             Action::TreeSetRoot => {
                 if let Some((path, is_dir, _)) = self.tree_entry_at(self.tree_cursor) {
+                    let selected = path.clone();
                     let dir = if is_dir {
                         path
                     } else {
@@ -440,13 +451,17 @@ impl App {
                             tree_fs::expand_to_path_lazy(&mut self.file_tree, cf, self.show_hidden);
                         }
                     }
+                    // Stay on the selected entry when it is still in the tree
+                    // (it is the new root when a directory was chosen).
+                    self.reselect_tree_cursor(Some(selected));
                     self.resync_watcher();
                 }
             }
             Action::ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
+                let prev = self.tree_cursor_path();
                 tree_fs::rescan_tree(&mut self.file_tree, self.show_hidden);
-                self.clamp_tree_cursor();
+                self.reselect_tree_cursor(prev);
                 self.resync_watcher();
             }
             Action::ToggleToc => {
@@ -1071,11 +1086,12 @@ fn run(app: &mut App) -> io::Result<()> {
         if let (Some(handle), Some(rx)) = (&app.watcher_handle, &app.watcher_rx) {
             let changed = tree_watch::drain_events(rx, &handle.watched_dirs);
             if !changed.is_empty() {
+                let prev = app.tree_cursor_path();
                 let show_hidden = app.show_hidden;
                 for dir in changed {
                     tree_fs::refresh_directory(&mut app.file_tree, &dir, show_hidden);
                 }
-                app.clamp_tree_cursor();
+                app.reselect_tree_cursor(prev);
                 needs_redraw = true;
             }
         }

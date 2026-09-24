@@ -175,8 +175,7 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                 current_spans.push(Span::styled(format!("`{code}`"), style));
             }
             Event::TaskListMarker(checked) => {
-                let marker = if checked { "[x] " } else { "[ ] " };
-                current_spans.push(Span::styled(marker, current_style(&style_stack)));
+                push_task_marker(&mut current_spans, checked, current_style(&style_stack));
             }
             Event::SoftBreak => {
                 current_spans.push(Span::raw(" "));
@@ -409,6 +408,10 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                         style_stack.push(current_style(&style_stack).fg(Color::DarkGray));
                         spans.push(Span::styled("│ ", Style::default().fg(Color::DarkGray)));
                     }
+                    "input" if tag_lower.contains("checkbox") => {
+                        let checked = tag_lower.contains("checked");
+                        push_task_marker(&mut spans, checked, current_style(&style_stack));
+                    }
                     "style" | "script" => {
                         skip_content = true;
                     }
@@ -490,6 +493,19 @@ fn decode_html_entities(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Add a task-list checkbox for the current item. An unordered item's `• `
+/// bullet is replaced by the checkbox; an ordinal (`1. `) is kept before it.
+fn push_task_marker(spans: &mut Vec<Span<'static>>, checked: bool, style: Style) {
+    let marker = if checked { "[x] " } else { "[ ] " };
+    if let Some(last) = spans.last_mut() {
+        if let Some(indent) = last.content.strip_suffix("• ") {
+            last.content = format!("{indent}{marker}").into();
+            return;
+        }
+    }
+    spans.push(Span::styled(marker, style));
 }
 
 /// Produce the bullet (or ordinal) for a new list item, advancing the
@@ -576,9 +592,20 @@ mod tests {
 
     #[test]
     fn task_list_markers_are_shown() {
-        let (lines, _) = render_markdown("- [x] done\n- [ ] todo\n");
+        let (lines, _) = render_markdown("- [x] done\n- [ ] todo\n1. [x] first\n");
         let t = text(&lines);
-        assert!(t.iter().any(|l| l.contains("[x] done")), "{t:?}");
-        assert!(t.iter().any(|l| l.contains("[ ] todo")), "{t:?}");
+        assert!(t.contains(&"[x] done".to_string()), "{t:?}");
+        assert!(t.contains(&"[ ] todo".to_string()), "{t:?}");
+        assert!(t.contains(&"1. [x] first".to_string()), "{t:?}");
+    }
+
+    #[test]
+    fn html_checkboxes_become_task_markers() {
+        let html = "<ul><li><input type=\"checkbox\" checked=\"\"/>done</li>\
+                    <li><input type=\"checkbox\"/>todo</li></ul>";
+        let (lines, _) = render_html_to_lines(html);
+        let t = text(&lines);
+        assert!(t.contains(&"[x] done".to_string()), "{t:?}");
+        assert!(t.contains(&"[ ] todo".to_string()), "{t:?}");
     }
 }
