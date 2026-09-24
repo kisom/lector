@@ -22,8 +22,8 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     let mut current_spans: Vec<Span<'static>> = Vec::new();
     let mut style_stack: Vec<Style> = vec![Style::default()];
     let mut in_code_block = false;
-    let mut list_depth: usize = 0;
-    let mut ordered_index: Option<u64> = None;
+    // One entry per open list: the next ordinal for ordered lists, None for bullets.
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut headings: Vec<TocHeading> = Vec::new();
     let mut current_heading: Option<(u8, String)> = None;
 
@@ -78,20 +78,20 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                 }
                 Tag::List(start) => {
                     flush_line(&mut lines, &mut current_spans);
-                    list_depth += 1;
-                    ordered_index = start;
+                    list_stack.push(start);
                 }
                 Tag::Item => {
                     flush_line(&mut lines, &mut current_spans);
-                    let indent = "  ".repeat(list_depth.saturating_sub(1));
-                    let bullet = if let Some(ref mut idx) = ordered_index {
-                        let s = format!("{indent}{idx}. ");
-                        *idx += 1;
-                        s
-                    } else {
-                        format!("{indent}• ")
-                    };
+                    let bullet = list_bullet(&mut list_stack);
                     current_spans.push(Span::styled(bullet, current_style(&style_stack)));
+                }
+                Tag::TableRow | Tag::TableHead => {
+                    flush_line(&mut lines, &mut current_spans);
+                }
+                Tag::TableCell => {
+                    if !current_spans.is_empty() {
+                        current_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+                    }
                 }
                 Tag::BlockQuote(_) => {
                     flush_line(&mut lines, &mut current_spans);
@@ -124,11 +124,17 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     style_stack.pop();
                 }
                 TagEnd::List(_) => {
-                    list_depth = list_depth.saturating_sub(1);
-                    ordered_index = None;
-                    if list_depth == 0 {
+                    list_stack.pop();
+                    if list_stack.is_empty() {
                         lines.push(Line::default());
                     }
+                }
+                TagEnd::TableHead | TagEnd::TableRow => {
+                    flush_line(&mut lines, &mut current_spans);
+                }
+                TagEnd::Table => {
+                    flush_line(&mut lines, &mut current_spans);
+                    lines.push(Line::default());
                 }
                 TagEnd::Item => {
                     flush_line(&mut lines, &mut current_spans);
@@ -160,8 +166,15 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                 }
             }
             Event::Code(code) => {
+                if let Some((_, ref mut heading_text)) = current_heading {
+                    heading_text.push_str(&code);
+                }
                 let style = current_style(&style_stack).fg(Color::Green);
                 current_spans.push(Span::styled(format!("`{code}`"), style));
+            }
+            Event::TaskListMarker(checked) => {
+                let marker = if checked { "[x] " } else { "[ ] " };
+                current_spans.push(Span::styled(marker, current_style(&style_stack)));
             }
             Event::SoftBreak => {
                 current_spans.push(Span::raw(" "));
@@ -222,8 +235,7 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut style_stack: Vec<Style> = vec![Style::default()];
     let mut in_pre = false;
-    let mut list_depth: usize = 0;
-    let mut ordered_idx: Option<u64> = None;
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
     let mut skip_content = false;
     let mut headings: Vec<TocHeading> = Vec::new();
     let mut current_heading: Option<(u8, String)> = None;
@@ -277,9 +289,8 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                         style_stack.pop();
                     }
                     "ul" | "ol" => {
-                        list_depth = list_depth.saturating_sub(1);
-                        ordered_idx = None;
-                        if list_depth == 0 {
+                        list_stack.pop();
+                        if list_stack.is_empty() {
                             lines.push(Line::default());
                         }
                     }
@@ -358,24 +369,15 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     }
                     "ul" => {
                         flush_line(&mut lines, &mut spans);
-                        list_depth += 1;
-                        ordered_idx = None;
+                        list_stack.push(None);
                     }
                     "ol" => {
                         flush_line(&mut lines, &mut spans);
-                        list_depth += 1;
-                        ordered_idx = Some(1);
+                        list_stack.push(Some(1));
                     }
                     "li" => {
                         flush_line(&mut lines, &mut spans);
-                        let indent = "  ".repeat(list_depth.saturating_sub(1));
-                        let bullet = if let Some(ref mut idx) = ordered_idx {
-                            let s = format!("{indent}{idx}. ");
-                            *idx += 1;
-                            s
-                        } else {
-                            format!("{indent}• ")
-                        };
+                        let bullet = list_bullet(&mut list_stack);
                         spans.push(Span::styled(bullet, current_style(&style_stack)));
                     }
                     "blockquote" => {
@@ -421,13 +423,63 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     (lines, headings)
 }
 
+/// Decode the HTML entities emitted by the org/rst HTML writers in a single
+/// pass, so that an escaped entity such as `&amp;lt;` decodes to `&lt;`
+/// rather than being decoded twice into `<`.
 fn decode_html_entities(s: &str) -> String {
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let decoded = rest[1..].find(';').filter(|&i| i <= 10).and_then(|i| {
+            let decoded = match &rest[1..=i] {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
+                entity => entity.strip_prefix('#').and_then(|num| {
+                    let code = match num.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                        None => num.parse().ok(),
+                    };
+                    code.and_then(char::from_u32)
+                }),
+            };
+            decoded.map(|c| (c, i + 2))
+        });
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Produce the bullet (or ordinal) for a new list item, advancing the
+/// innermost ordered list's counter.
+fn list_bullet(list_stack: &mut [Option<u64>]) -> String {
+    let indent = "  ".repeat(list_stack.len().saturating_sub(1));
+    match list_stack.last_mut() {
+        Some(Some(idx)) => {
+            let s = format!("{indent}{idx}. ");
+            *idx += 1;
+            s
+        }
+        _ => format!("{indent}• "),
+    }
 }
 
 fn flush_line(lines: &mut Vec<Line<'static>>, spans: &mut Vec<Span<'static>>) {
@@ -455,5 +507,51 @@ fn heading_style(level: HeadingLevel) -> Style {
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
         _ => Style::default().add_modifier(Modifier::BOLD),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(lines: &[Line<'static>]) -> Vec<String> {
+        lines.iter().map(|l| l.to_string()).collect()
+    }
+
+    #[test]
+    fn decodes_entities_once() {
+        assert_eq!(decode_html_entities("a &amp;lt; b"), "a &lt; b");
+        assert_eq!(decode_html_entities("&lt;tag&gt; &#39;x&#x27;"), "<tag> 'x'");
+        assert_eq!(decode_html_entities("AT&T & co"), "AT&T & co");
+    }
+
+    #[test]
+    fn nested_list_keeps_outer_numbering() {
+        let (lines, _) = render_markdown("1. one\n   - inner\n2. two\n3. three\n");
+        let t = text(&lines);
+        assert!(t.iter().any(|l| l.starts_with("2. two")), "{t:?}");
+        assert!(t.iter().any(|l| l.starts_with("3. three")), "{t:?}");
+    }
+
+    #[test]
+    fn heading_text_includes_inline_code() {
+        let (_, headings) = render_markdown("# The `foo` function\n");
+        assert_eq!(headings[0].text, "The foo function");
+    }
+
+    #[test]
+    fn table_rows_render_on_separate_lines() {
+        let (lines, _) = render_markdown("| A | B |\n|---|---|\n| 1 | 2 |\n");
+        let t = text(&lines);
+        assert!(t.contains(&"A │ B".to_string()), "{t:?}");
+        assert!(t.contains(&"1 │ 2".to_string()), "{t:?}");
+    }
+
+    #[test]
+    fn task_list_markers_are_shown() {
+        let (lines, _) = render_markdown("- [x] done\n- [ ] todo\n");
+        let t = text(&lines);
+        assert!(t.iter().any(|l| l.contains("[x] done")), "{t:?}");
+        assert!(t.iter().any(|l| l.contains("[ ] todo")), "{t:?}");
     }
 }
