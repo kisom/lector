@@ -156,8 +156,10 @@ mod tests {
 
     #[test]
     fn font_size_clamping() {
-        let mut font = FontConfig::default();
-        font.size = 47.0;
+        let mut font = FontConfig {
+            size: 47.0,
+            ..Default::default()
+        };
         font.increase_size();
         assert_eq!(font.size, 48.0); // clamped to max
         font.increase_size();
