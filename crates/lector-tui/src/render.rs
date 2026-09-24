@@ -47,7 +47,11 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     style_stack.push(style);
                 }
                 Tag::Paragraph => {
-                    flush_line(&mut lines, &mut current_spans);
+                    // In a loose list item the paragraph follows the bullet;
+                    // keep them on one line.
+                    if !is_only_bullet(&current_spans) {
+                        flush_line(&mut lines, &mut current_spans);
+                    }
                 }
                 Tag::Emphasis => {
                     let style = current_style(&style_stack).add_modifier(Modifier::ITALIC);
@@ -351,7 +355,9 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                         style_stack.push(heading_style(HeadingLevel::H4));
                     }
                     "p" | "div" => {
-                        flush_line(&mut lines, &mut spans);
+                        if !is_only_bullet(&spans) {
+                            flush_line(&mut lines, &mut spans);
+                        }
                     }
                     "strong" | "b" => {
                         style_stack.push(current_style(&style_stack).add_modifier(Modifier::BOLD));
@@ -508,6 +514,17 @@ fn push_task_marker(spans: &mut Vec<Span<'static>>, checked: bool, style: Style)
     spans.push(Span::styled(marker, style));
 }
 
+/// True when the pending spans are just a list item's bullet or ordinal (as
+/// produced by `list_bullet`), i.e. the item has no content yet.
+fn is_only_bullet(spans: &[Span<'static>]) -> bool {
+    let [span] = spans else { return false };
+    let marker = span.content.trim_start_matches(' ');
+    marker == "• "
+        || marker
+            .strip_suffix(". ")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Produce the bullet (or ordinal) for a new list item, advancing the
 /// innermost ordered list's counter.
 fn list_bullet(list_stack: &mut [Option<u64>]) -> String {
@@ -600,9 +617,23 @@ mod tests {
     }
 
     #[test]
+    fn loose_list_items_keep_bullet_on_the_text_line() {
+        let md = "- [x] loose\n\n  more\n\n- plain\n\n1. [ ] first\n\n   body\n";
+        let (lines, _) = render_markdown(md);
+        let t = text(&lines);
+        assert!(t.contains(&"[x] loose".to_string()), "{t:?}");
+        assert!(t.contains(&"• plain".to_string()), "{t:?}");
+        assert!(t.contains(&"1. [ ] first".to_string()), "{t:?}");
+        assert!(
+            !t.iter().any(|l| l.trim() == "•" || l.trim() == "1."),
+            "{t:?}"
+        );
+    }
+
+    #[test]
     fn html_checkboxes_become_task_markers() {
         let html = "<ul><li><input type=\"checkbox\" checked=\"\"/>done</li>\
-                    <li><input type=\"checkbox\"/>todo</li></ul>";
+                    <li><p><input type=\"checkbox\"/>todo</p></li></ul>";
         let (lines, _) = render_html_to_lines(html);
         let t = text(&lines);
         assert!(t.contains(&"[x] done".to_string()), "{t:?}");

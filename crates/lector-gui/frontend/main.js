@@ -1169,8 +1169,13 @@ document.getElementById('viewer-content').addEventListener('click', async (e) =>
     }
   }
 
-  // Check for links
-  const link = e.target.closest('a[href]');
+  // Check for links. comrak's heading permalink is an empty
+  // `<a class="anchor">` inside the heading, so a click on the heading text
+  // lands on the <h*> element; follow its anchor (unless text was selected).
+  let link = e.target.closest('a[href]');
+  if (!link && sel && sel.isCollapsed) {
+    link = e.target.closest('h1,h2,h3,h4,h5,h6')?.querySelector('a.anchor[href]');
+  }
   if (link) {
     e.preventDefault();
     const href = link.getAttribute('href');
