@@ -16,13 +16,20 @@ pub struct TreeNode {
 #[derive(Debug, Clone)]
 pub enum NodeKind {
     File,
-    Directory { children: Vec<TreeNode>, expanded: bool },
+    Directory {
+        children: Vec<TreeNode>,
+        expanded: bool,
+    },
 }
 
 impl TreeNode {
     /// Create a file node.
     pub fn file(name: String, path: PathBuf) -> Self {
-        Self { name, path, kind: NodeKind::File }
+        Self {
+            name,
+            path,
+            kind: NodeKind::File,
+        }
     }
 
     /// Create a directory node.
@@ -30,7 +37,10 @@ impl TreeNode {
         Self {
             name,
             path,
-            kind: NodeKind::Directory { children, expanded: false },
+            kind: NodeKind::Directory {
+                children,
+                expanded: false,
+            },
         }
     }
 
@@ -98,7 +108,11 @@ impl TreeNode {
 
     fn flatten_into<'a>(&'a self, depth: usize, out: &mut Vec<FlatEntry<'a>>) {
         out.push(FlatEntry { node: self, depth });
-        if let NodeKind::Directory { children, expanded: true } = &self.kind {
+        if let NodeKind::Directory {
+            children,
+            expanded: true,
+        } = &self.kind
+        {
             for child in children {
                 child.flatten_into(depth + 1, out);
             }

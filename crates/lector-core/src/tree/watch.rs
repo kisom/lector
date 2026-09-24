@@ -123,7 +123,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "FSEvents delivery is too slow in macOS CI")]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "FSEvents delivery is too slow in macOS CI"
+    )]
     fn detects_new_file() {
         let (mut handle, rx) = create_watcher().unwrap();
         let tmp = tempfile::tempdir().unwrap();

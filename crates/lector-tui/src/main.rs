@@ -3,9 +3,13 @@ mod render;
 use std::io;
 use std::path::PathBuf;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
@@ -155,7 +159,14 @@ impl App {
                 for ann in annotations {
                     self.toc_headings.push(render::TocHeading {
                         level: 0,
-                        text: format!("📝 {}", if ann.comment.is_empty() { &ann.selected_text } else { &ann.comment }),
+                        text: format!(
+                            "📝 {}",
+                            if ann.comment.is_empty() {
+                                &ann.selected_text
+                            } else {
+                                &ann.comment
+                            }
+                        ),
                         line_index: ann.start_line as usize,
                         is_annotation: true,
                     });
@@ -167,14 +178,20 @@ impl App {
     fn save_annotation(&self, line: usize, comment: &str) {
         if let (Some(store), Some(ref file)) = (&self.annotations, &self.current_file) {
             // Get the text of the line being annotated
-            let text = self.rendered_lines.get(line)
+            let text = self
+                .rendered_lines
+                .get(line)
                 .map(|l| l.to_string())
                 .unwrap_or_default();
             let _ = store.save(
                 file,
-                line as u32, 0,
-                line as u32, text.len() as u32,
-                &text, comment, "yellow",
+                line as u32,
+                0,
+                line as u32,
+                text.len() as u32,
+                &text,
+                comment,
+                "yellow",
             );
         }
     }
@@ -201,7 +218,8 @@ impl App {
         }
 
         let in_tree = self.show_tree && Self::in_rect(column, row, self.tree_area);
-        let in_toc = self.show_toc && self.toc_area.width > 0 && Self::in_rect(column, row, self.toc_area);
+        let in_toc =
+            self.show_toc && self.toc_area.width > 0 && Self::in_rect(column, row, self.toc_area);
 
         match kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -246,8 +264,7 @@ impl App {
                     let max = self.toc_headings.len().saturating_sub(1);
                     self.toc_cursor = (self.toc_cursor + 3).min(max);
                 } else {
-                    self.scroll_offset = (self.scroll_offset + 3)
-                        .min(self.max_scroll());
+                    self.scroll_offset = (self.scroll_offset + 3).min(self.max_scroll());
                 }
             }
             _ => {}
@@ -270,12 +287,18 @@ impl App {
                     self.annotation_input = None;
                     self.refresh_toc_entries();
                 }
-                KeyCode::Esc => { self.annotation_input = None; }
+                KeyCode::Esc => {
+                    self.annotation_input = None;
+                }
                 KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.annotation_input = None;
                 }
-                KeyCode::Char(c) => { input.push(c); }
-                KeyCode::Backspace => { input.pop(); }
+                KeyCode::Char(c) => {
+                    input.push(c);
+                }
+                KeyCode::Backspace => {
+                    input.pop();
+                }
                 _ => {}
             }
             return;
@@ -285,7 +308,10 @@ impl App {
             || (key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL));
 
         // C-h toggles help even when help is visible
-        if key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL) && self.show_help {
+        if key.code == KeyCode::Char('h')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && self.show_help
+        {
             self.show_help = false;
             return;
         }
@@ -329,9 +355,13 @@ impl App {
         match action {
             Action::ToggleFocus => {
                 let mut visible = Vec::new();
-                if self.show_tree { visible.push(FocusedPane::Tree); }
+                if self.show_tree {
+                    visible.push(FocusedPane::Tree);
+                }
                 visible.push(FocusedPane::Viewer);
-                if self.show_toc { visible.push(FocusedPane::Toc); }
+                if self.show_toc {
+                    visible.push(FocusedPane::Toc);
+                }
                 self.focus.cycle(&visible);
             }
             Action::CloseFile => {
@@ -354,7 +384,9 @@ impl App {
                     self.document = Some(doc);
                     self.rendered_lines = lines;
                     self.toc_headings = headings;
-                    self.toc_cursor = self.toc_cursor.min(self.toc_headings.len().saturating_sub(1));
+                    self.toc_cursor = self
+                        .toc_cursor
+                        .min(self.toc_headings.len().saturating_sub(1));
                     self.refresh_toc_entries();
                     self.scroll_offset = self.scroll_offset.min(self.max_scroll());
                 }
@@ -640,8 +672,8 @@ impl App {
         // Draw annotation input bar if active
         if let (Some(ref input), Some(bar_area)) = (&self.annotation_input, input_area) {
             let text = format!("Note (line {}): {}", self.annotation_line + 1, input);
-            let bar = Paragraph::new(text)
-                .style(Style::default().fg(Color::White).bg(Color::DarkGray));
+            let bar =
+                Paragraph::new(text).style(Style::default().fg(Color::White).bg(Color::DarkGray));
             frame.render_widget(bar, bar_area);
         }
     }
@@ -667,7 +699,11 @@ impl App {
             .map(|(idx, entry)| {
                 let indent = "  ".repeat(entry.depth);
                 let icon = if entry.node.is_dir() {
-                    if entry.node.is_expanded() { "▾ " } else { "▸ " }
+                    if entry.node.is_expanded() {
+                        "▾ "
+                    } else {
+                        "▸ "
+                    }
                 } else {
                     "  "
                 };
@@ -792,8 +828,12 @@ impl App {
                     Style::default().bg(Color::DarkGray).fg(Color::White)
                 } else {
                     match h.level {
-                        1 => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                        2 => Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                        1 => Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                        2 => Style::default()
+                            .fg(Color::Blue)
+                            .add_modifier(Modifier::BOLD),
                         3 => Style::default().fg(Color::Magenta),
                         _ => Style::default().fg(Color::White),
                     }
@@ -810,10 +850,7 @@ impl App {
             self.toc_scroll = self.toc_cursor;
         }
 
-        let visible_items: Vec<ListItem> = items
-            .into_iter()
-            .skip(self.toc_scroll)
-            .collect();
+        let visible_items: Vec<ListItem> = items.into_iter().skip(self.toc_scroll).collect();
 
         let list = List::new(visible_items).block(
             Block::default()
@@ -850,14 +887,18 @@ impl App {
 
         let lines: Vec<Line> = std::iter::once(Line::styled(
             "Keyboard Shortcuts",
-            Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
         ))
         .chain(std::iter::once(Line::default()))
         .chain(bindings.iter().map(|(key, desc)| {
             Line::from(vec![
                 Span::styled(
                     format!("{key:>14}  "),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(*desc, Style::default().fg(Color::White)),
             ])
@@ -873,7 +914,12 @@ impl App {
         let help_width = 46;
         let x = area.width.saturating_sub(help_width) / 2;
         let y = area.height.saturating_sub(help_height) / 2;
-        let help_area = Rect::new(x, y, help_width.min(area.width), help_height.min(area.height));
+        let help_area = Rect::new(
+            x,
+            y,
+            help_width.min(area.width),
+            help_height.min(area.height),
+        );
 
         // Clear the area behind the dialog
         frame.render_widget(ratatui::widgets::Clear, help_area);
@@ -914,7 +960,9 @@ fn translate_key(key: KeyEvent) -> (String, Modifiers) {
     (key_str, mods)
 }
 
-fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>, Vec<render::TocHeading>) {
+fn load_and_render(
+    path: &std::path::Path,
+) -> (Document, Vec<Line<'static>>, Vec<render::TocHeading>) {
     match Document::load(path) {
         Ok(doc) => {
             let (lines, headings) = match doc.format {
@@ -956,7 +1004,6 @@ fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>, Vec
         }
     }
 }
-
 
 /// Restore the terminal to its normal state.
 fn restore_terminal() {

@@ -58,8 +58,7 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     style_stack.push(style);
                 }
                 Tag::Strikethrough => {
-                    let style =
-                        current_style(&style_stack).add_modifier(Modifier::CROSSED_OUT);
+                    let style = current_style(&style_stack).add_modifier(Modifier::CROSSED_OUT);
                     style_stack.push(style);
                 }
                 Tag::CodeBlock(_) => {
@@ -90,7 +89,8 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                 }
                 Tag::TableCell => {
                     if !current_spans.is_empty() {
-                        current_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+                        current_spans
+                            .push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
                     }
                 }
                 Tag::BlockQuote(_) => {
@@ -106,7 +106,12 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     if let Some((lvl, text)) = current_heading.take() {
                         // The heading line is the one about to be flushed
                         let line_index = lines.len(); // will be the index after flush
-                        headings.push(TocHeading { level: lvl, text, line_index, is_annotation: false });
+                        headings.push(TocHeading {
+                            level: lvl,
+                            text,
+                            line_index,
+                            is_annotation: false,
+                        });
                     }
                     flush_line(&mut lines, &mut current_spans);
                     style_stack.pop();
@@ -156,10 +161,7 @@ pub fn render_markdown(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                         if i > 0 {
                             flush_line(&mut lines, &mut current_spans);
                         }
-                        current_spans.push(Span::styled(
-                            format!("  {line}"),
-                            style,
-                        ));
+                        current_spans.push(Span::styled(format!("  {line}"), style));
                     }
                 } else {
                     current_spans.push(Span::styled(text.to_string(), style));
@@ -207,7 +209,10 @@ pub fn render_org(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
             let html = String::from_utf8(buf).unwrap_or_else(|_| source.to_string());
             render_html_to_lines(&html)
         }
-        Err(_) => (source.lines().map(|l| Line::raw(l.to_string())).collect(), Vec::new()),
+        Err(_) => (
+            source.lines().map(|l| Line::raw(l.to_string())).collect(),
+            Vec::new(),
+        ),
     }
 }
 
@@ -221,10 +226,16 @@ pub fn render_rst(source: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     let html = String::from_utf8(buf).unwrap_or_else(|_| source.to_string());
                     render_html_to_lines(&html)
                 }
-                Err(_) => (source.lines().map(|l| Line::raw(l.to_string())).collect(), Vec::new()),
+                Err(_) => (
+                    source.lines().map(|l| Line::raw(l.to_string())).collect(),
+                    Vec::new(),
+                ),
             }
         }
-        Err(_) => (source.lines().map(|l| Line::raw(l.to_string())).collect(), Vec::new()),
+        Err(_) => (
+            source.lines().map(|l| Line::raw(l.to_string())).collect(),
+            Vec::new(),
+        ),
     }
 }
 
@@ -246,14 +257,20 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
     while pos < bytes.len() {
         if bytes[pos] == b'<' {
             // Parse tag
-            let tag_end = html[pos..].find('>').map(|i| pos + i + 1).unwrap_or(html.len());
+            let tag_end = html[pos..]
+                .find('>')
+                .map(|i| pos + i + 1)
+                .unwrap_or(html.len());
             let tag_str = &html[pos..tag_end];
             let tag_lower = tag_str.to_lowercase();
 
             // Closing tag?
             let is_close = tag_lower.starts_with("</");
             let tag_name = if is_close {
-                tag_lower.trim_start_matches("</").trim_end_matches('>').trim()
+                tag_lower
+                    .trim_start_matches("</")
+                    .trim_end_matches('>')
+                    .trim()
             } else {
                 tag_lower
                     .trim_start_matches('<')
@@ -267,7 +284,12 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         if let Some((lvl, text)) = current_heading.take() {
                             let line_index = lines.len();
-                            headings.push(TocHeading { level: lvl, text, line_index, is_annotation: false });
+                            headings.push(TocHeading {
+                                level: lvl,
+                                text,
+                                line_index,
+                                is_annotation: false,
+                            });
                         }
                         flush_line(&mut lines, &mut spans);
                         style_stack.pop();
@@ -336,10 +358,12 @@ fn render_html_to_lines(html: &str) -> (Vec<Line<'static>>, Vec<TocHeading>) {
                         style_stack.push(current_style(&style_stack).add_modifier(Modifier::BOLD));
                     }
                     "em" | "i" => {
-                        style_stack.push(current_style(&style_stack).add_modifier(Modifier::ITALIC));
+                        style_stack
+                            .push(current_style(&style_stack).add_modifier(Modifier::ITALIC));
                     }
                     "s" | "del" => {
-                        style_stack.push(current_style(&style_stack).add_modifier(Modifier::CROSSED_OUT));
+                        style_stack
+                            .push(current_style(&style_stack).add_modifier(Modifier::CROSSED_OUT));
                     }
                     "code" => {
                         style_stack.push(current_style(&style_stack).fg(Color::Green));
@@ -521,7 +545,10 @@ mod tests {
     #[test]
     fn decodes_entities_once() {
         assert_eq!(decode_html_entities("a &amp;lt; b"), "a &lt; b");
-        assert_eq!(decode_html_entities("&lt;tag&gt; &#39;x&#x27;"), "<tag> 'x'");
+        assert_eq!(
+            decode_html_entities("&lt;tag&gt; &#39;x&#x27;"),
+            "<tag> 'x'"
+        );
         assert_eq!(decode_html_entities("AT&T & co"), "AT&T & co");
     }
 

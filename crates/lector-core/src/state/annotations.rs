@@ -184,7 +184,9 @@ mod tests {
         let store = AnnotationStore::open_memory().unwrap();
         let path = Path::new("/test.md");
 
-        let id = store.save(path, 1, 0, 1, 10, "text", "note", "yellow").unwrap();
+        let id = store
+            .save(path, 1, 0, 1, 10, "text", "note", "yellow")
+            .unwrap();
         assert!(store.delete(id).unwrap());
         assert!(store.load(path).unwrap().is_empty());
     }
@@ -194,8 +196,12 @@ mod tests {
         let store = AnnotationStore::open_memory().unwrap();
         let path = Path::new("/test.md");
 
-        store.save(path, 10, 0, 10, 5, "later", "b", "green").unwrap();
-        store.save(path, 2, 0, 2, 5, "earlier", "a", "yellow").unwrap();
+        store
+            .save(path, 10, 0, 10, 5, "later", "b", "green")
+            .unwrap();
+        store
+            .save(path, 2, 0, 2, 5, "earlier", "a", "yellow")
+            .unwrap();
 
         let annotations = store.load(path).unwrap();
         assert_eq!(annotations.len(), 2);

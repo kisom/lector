@@ -243,11 +243,17 @@ mod tests {
     use super::*;
 
     fn ctrl() -> Modifiers {
-        Modifiers { ctrl: true, ..Default::default() }
+        Modifiers {
+            ctrl: true,
+            ..Default::default()
+        }
     }
 
     fn alt() -> Modifiers {
-        Modifiers { alt: true, ..Default::default() }
+        Modifiers {
+            alt: true,
+            ..Default::default()
+        }
     }
 
     fn none() -> Modifiers {
@@ -312,10 +318,7 @@ mod tests {
         assert!(mapper.has_pending());
 
         // C-f should complete the chord
-        assert_eq!(
-            mapper.process("f", ctrl(), focus),
-            Some(Action::OpenPath)
-        );
+        assert_eq!(mapper.process("f", ctrl(), focus), Some(Action::OpenPath));
         assert!(!mapper.has_pending());
     }
 
@@ -325,10 +328,7 @@ mod tests {
         let focus = FocusedPane::Viewer;
 
         assert_eq!(mapper.process("x", ctrl(), focus), None);
-        assert_eq!(
-            mapper.process("c", ctrl(), focus),
-            Some(Action::Quit)
-        );
+        assert_eq!(mapper.process("c", ctrl(), focus), Some(Action::Quit));
     }
 
     #[test]
@@ -361,10 +361,7 @@ mod tests {
         let focus = FocusedPane::Viewer;
 
         assert_eq!(mapper.process("escape", none(), focus), None);
-        assert_eq!(
-            mapper.process("t", none(), focus),
-            Some(Action::CycleTheme)
-        );
+        assert_eq!(mapper.process("t", none(), focus), Some(Action::CycleTheme));
     }
 
     #[test]

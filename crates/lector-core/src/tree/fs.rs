@@ -29,7 +29,9 @@ pub fn scan_directory(root: &Path, show_hidden: bool) -> TreeNode {
 /// Child directories that still exist keep their previous node, so their
 /// expansion state and already-loaded subtrees survive a refresh.
 fn populate_children(node: &mut TreeNode, dir: &Path, show_hidden: bool) {
-    let Some(children) = node.children_mut() else { return };
+    let Some(children) = node.children_mut() else {
+        return;
+    };
 
     let mut previous: HashMap<PathBuf, TreeNode> = std::mem::take(children)
         .into_iter()
@@ -135,7 +137,10 @@ pub fn expand_to_path_lazy(tree: &mut TreeNode, target: &Path, show_hidden: bool
 }
 
 /// Find a mutable reference to a tree node by path.
-fn find_node_mut<'a>(node: &'a mut super::TreeNode, target: &Path) -> Option<&'a mut super::TreeNode> {
+fn find_node_mut<'a>(
+    node: &'a mut super::TreeNode,
+    target: &Path,
+) -> Option<&'a mut super::TreeNode> {
     if node.path == target {
         return Some(node);
     }
@@ -348,7 +353,11 @@ mod tests {
         fs::write(root.join("new.md"), "y").unwrap();
         assert!(refresh_directory(&mut tree, root, false));
 
-        let flat: Vec<_> = tree.flatten(0).iter().map(|e| e.node.path.clone()).collect();
+        let flat: Vec<_> = tree
+            .flatten(0)
+            .iter()
+            .map(|e| e.node.path.clone())
+            .collect();
         assert!(flat.contains(&root.join("new.md")));
         // The grandchild listing survives the refresh of the root.
         assert!(flat.contains(&root.join("a/b/deep.md")));
@@ -368,7 +377,11 @@ mod tests {
         fs::write(docs.join("two.md"), "2").unwrap();
         toggle_at_path_lazy(&mut tree, &docs, false); // expand again
 
-        let flat: Vec<_> = tree.flatten(0).iter().map(|e| e.node.path.clone()).collect();
+        let flat: Vec<_> = tree
+            .flatten(0)
+            .iter()
+            .map(|e| e.node.path.clone())
+            .collect();
         assert!(flat.contains(&docs.join("two.md")));
     }
 
@@ -384,7 +397,11 @@ mod tests {
         toggle_at_path_lazy(&mut tree, &root.join("docs"), false);
         rescan_tree(&mut tree, true);
 
-        let flat: Vec<_> = tree.flatten(0).iter().map(|e| e.node.path.clone()).collect();
+        let flat: Vec<_> = tree
+            .flatten(0)
+            .iter()
+            .map(|e| e.node.path.clone())
+            .collect();
         assert!(flat.contains(&root.join("docs/guide.md")));
         assert!(flat.contains(&root.join("docs/.hidden.md")));
     }
