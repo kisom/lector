@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// Stores and retrieves file scroll positions across sessions.
 pub struct PositionStore {
@@ -60,12 +60,12 @@ impl PositionStore {
     /// Retrieve the saved scroll position for a file.
     pub fn load(&self, file_path: &Path) -> Result<Option<f32>, PositionError> {
         let path_str = file_path.to_string_lossy();
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT scroll_offset FROM file_positions WHERE file_path = ?1",
         )?;
         let result = stmt
             .query_row(rusqlite::params![path_str.as_ref()], |row| row.get(0))
-            .ok();
+            .optional()?;
         Ok(result)
     }
 

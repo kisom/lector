@@ -1,35 +1,23 @@
 use std::path::{Path, PathBuf};
 
 /// Find the git repository root for a given path.
-/// Walks up the directory tree checking for a `.git` directory.
-/// Stops at the filesystem root or on access errors.
+/// Walks up the directory tree checking for a `.git` entry (a directory for
+/// ordinary repositories, a file for worktrees and submodules).
+/// Relative paths are resolved against the current directory first, so the
+/// walk is not cut short at the end of the relative component list.
 /// Returns None if the path is not inside a git repository.
 pub fn find_git_root(path: &Path) -> Option<PathBuf> {
+    let path = std::path::absolute(path).ok()?;
     let start = if path.is_file() {
         path.parent()?
     } else {
-        path
+        path.as_path()
     };
 
-    let mut current = start;
-    loop {
-        match std::fs::read_dir(current) {
-            Ok(entries) => {
-                let has_git = entries
-                    .filter_map(|e| e.ok())
-                    .any(|e| e.file_name() == ".git");
-                if has_git {
-                    return Some(current.to_path_buf());
-                }
-            }
-            Err(_) => return None, // permission error or inaccessible
-        }
-
-        match current.parent() {
-            Some(parent) if parent != current => current = parent,
-            _ => return None, // reached filesystem root
-        }
-    }
+    start
+        .ancestors()
+        .find(|dir| dir.join(".git").symlink_metadata().is_ok())
+        .map(Path::to_path_buf)
 }
 
 #[cfg(test)]

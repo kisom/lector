@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
@@ -23,8 +24,18 @@ pub fn scan_directory(root: &Path, show_hidden: bool) -> TreeNode {
     root_node
 }
 
+/// Re-read `dir` from disk and replace the node's children.
+///
+/// Child directories that still exist keep their previous node, so their
+/// expansion state and already-loaded subtrees survive a refresh.
 fn populate_children(node: &mut TreeNode, dir: &Path, show_hidden: bool) {
     let Some(children) = node.children_mut() else { return };
+
+    let mut previous: HashMap<PathBuf, TreeNode> = std::mem::take(children)
+        .into_iter()
+        .filter(|c| c.is_dir())
+        .map(|c| (c.path.clone(), c))
+        .collect();
 
     let mut dirs: Vec<TreeNode> = Vec::new();
     let mut files: Vec<TreeNode> = Vec::new();
@@ -39,29 +50,39 @@ fn populate_children(node: &mut TreeNode, dir: &Path, show_hidden: bool) {
         .build();
 
     for entry in walker.flatten() {
-        let path = entry.path();
-
         // Skip the root directory itself
-        if path == dir {
+        if entry.depth() == 0 {
             continue;
         }
+        let path = entry.path();
 
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        // The walker already knows the entry type; only symlinks need a stat
+        // to learn whether they point at a directory.
+        let is_dir = match entry.file_type() {
+            Some(ft) if ft.is_symlink() => path.is_dir(),
+            Some(ft) => ft.is_dir(),
+            None => path.is_dir(),
+        };
 
-        if path.is_dir() {
-            let dir_node = TreeNode::directory(name, path.to_path_buf(), Vec::new());
+        if is_dir {
+            let dir_node = previous.remove(path).unwrap_or_else(|| {
+                TreeNode::directory(file_name(path), path.to_path_buf(), Vec::new())
+            });
             dirs.push(dir_node);
         } else {
-            files.push(TreeNode::file(name, path.to_path_buf()));
+            files.push(TreeNode::file(file_name(path), path.to_path_buf()));
         }
     }
 
     // Directories first, then files (both sorted alphabetically by the walker)
     dirs.append(&mut files);
     *children = dirs;
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Populate a directory node's children if they haven't been loaded yet.
@@ -74,35 +95,40 @@ fn ensure_populated(node: &mut TreeNode, show_hidden: bool) {
     }
 }
 
+/// Expand a directory node, re-reading it from disk. Collapsed directories
+/// are not watched, so any cached listing may be stale.
+fn expand_node(node: &mut TreeNode, show_hidden: bool) {
+    if node.is_dir() {
+        node.set_expanded(true);
+        let dir = node.path.clone();
+        populate_children(node, &dir, show_hidden);
+    }
+}
+
 /// Toggle a directory at the given path, lazily populating children when expanding.
 pub fn toggle_at_path_lazy(tree: &mut TreeNode, target: &Path, show_hidden: bool) -> bool {
-    if tree.path == target {
-        tree.toggle_expanded();
-        if tree.is_expanded() {
-            ensure_populated(tree, show_hidden);
-        }
-        return true;
+    let Some(node) = find_node_mut(tree, target) else {
+        return false;
+    };
+    if node.is_expanded() {
+        node.set_expanded(false);
+    } else {
+        expand_node(node, show_hidden);
     }
-    if let super::NodeKind::Directory { children, .. } = &mut tree.kind {
-        for child in children.iter_mut() {
-            if toggle_at_path_lazy(child, target, show_hidden) {
-                return true;
-            }
-        }
-    }
-    false
+    true
 }
 
 /// Expand all directories along a path, lazily populating children as needed.
 pub fn expand_to_path_lazy(tree: &mut TreeNode, target: &Path, show_hidden: bool) {
     if target.starts_with(&tree.path) {
-        tree.set_expanded(true);
-        ensure_populated(tree, show_hidden);
+        if tree.is_expanded() {
+            ensure_populated(tree, show_hidden);
+        } else {
+            expand_node(tree, show_hidden);
+        }
         if let Some(children) = tree.children_mut() {
-            for child in children.iter_mut() {
-                if target.starts_with(&child.path) {
-                    expand_to_path_lazy(child, target, show_hidden);
-                }
+            if let Some(child) = children.iter_mut().find(|c| target.starts_with(&c.path)) {
+                expand_to_path_lazy(child, target, show_hidden);
             }
         }
     }
@@ -131,45 +157,41 @@ pub fn refresh_directory(tree: &mut super::TreeNode, target_dir: &Path, show_hid
     let Some(node) = find_node_mut(tree, target_dir) else {
         return false;
     };
-
-    // Record which child directories were expanded
-    let expanded: std::collections::HashSet<PathBuf> = match &node.kind {
-        super::NodeKind::Directory { children, .. } => children
-            .iter()
-            .filter(|c| c.is_expanded())
-            .map(|c| c.path.clone())
-            .collect(),
-        super::NodeKind::File => return false,
-    };
-
-    // Re-scan children from disk
+    if !node.is_dir() {
+        return false;
+    }
     let dir = node.path.clone();
     populate_children(node, &dir, show_hidden);
+    true
+}
 
-    // Restore expansion state
-    if let super::NodeKind::Directory { children, .. } = &mut node.kind {
+/// Re-read every expanded directory from disk, keeping the current expansion
+/// state. Used for a manual refresh and when the hidden-entry filter changes.
+pub fn rescan_tree(tree: &mut super::TreeNode, show_hidden: bool) {
+    if !tree.is_expanded() {
+        return;
+    }
+    let dir = tree.path.clone();
+    populate_children(tree, &dir, show_hidden);
+    if let Some(children) = tree.children_mut() {
         for child in children.iter_mut() {
-            if expanded.contains(&child.path) {
-                child.set_expanded(true);
-                ensure_populated(child, show_hidden);
-            }
+            rescan_tree(child, show_hidden);
         }
     }
-
-    true
 }
 
 /// Collect paths of all expanded directories in the tree.
 pub fn collect_expanded_dirs(node: &super::TreeNode) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if node.is_dir() && node.is_expanded() {
-        dirs.push(node.path.clone());
-        if let Some(children) = node.children() {
-            for child in children {
-                dirs.extend(collect_expanded_dirs(child));
+    fn walk(node: &super::TreeNode, dirs: &mut Vec<PathBuf>) {
+        if node.is_dir() && node.is_expanded() {
+            dirs.push(node.path.clone());
+            for child in node.children().unwrap_or_default() {
+                walk(child, dirs);
             }
         }
     }
+    let mut dirs = Vec::new();
+    walk(node, &mut dirs);
     dirs
 }
 
@@ -203,7 +225,11 @@ pub fn toggle_at_path_watched(
     // Check if the node is now expanded or collapsed
     if let Some(node) = find_node_mut(tree, target) {
         if node.is_expanded() {
-            handle.watch(target);
+            // Subdirectories that were expanded before the parent was
+            // collapsed are visible again, so they need watching too.
+            for dir in collect_expanded_dirs(node) {
+                handle.watch(&dir);
+            }
         } else {
             // Unwatch this dir and all its previously-expanded children
             for dir in &previously_expanded {
@@ -306,5 +332,60 @@ mod tests {
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].name, ".config");
         assert!(children[0].is_dir());
+    }
+
+    #[test]
+    fn refresh_preserves_nested_expansion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/deep.md"), "x").unwrap();
+
+        let mut tree = scan_directory(root, false);
+        toggle_at_path_lazy(&mut tree, &root.join("a"), false);
+        toggle_at_path_lazy(&mut tree, &root.join("a/b"), false);
+
+        fs::write(root.join("new.md"), "y").unwrap();
+        assert!(refresh_directory(&mut tree, root, false));
+
+        let flat: Vec<_> = tree.flatten(0).iter().map(|e| e.node.path.clone()).collect();
+        assert!(flat.contains(&root.join("new.md")));
+        // The grandchild listing survives the refresh of the root.
+        assert!(flat.contains(&root.join("a/b/deep.md")));
+    }
+
+    #[test]
+    fn re_expanding_a_directory_rereads_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::write(root.join("docs/one.md"), "1").unwrap();
+
+        let mut tree = scan_directory(root, false);
+        let docs = root.join("docs");
+        toggle_at_path_lazy(&mut tree, &docs, false); // expand
+        toggle_at_path_lazy(&mut tree, &docs, false); // collapse
+        fs::write(docs.join("two.md"), "2").unwrap();
+        toggle_at_path_lazy(&mut tree, &docs, false); // expand again
+
+        let flat: Vec<_> = tree.flatten(0).iter().map(|e| e.node.path.clone()).collect();
+        assert!(flat.contains(&docs.join("two.md")));
+    }
+
+    #[test]
+    fn rescan_keeps_expanded_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::write(root.join("docs/guide.md"), "g").unwrap();
+        fs::write(root.join("docs/.hidden.md"), "h").unwrap();
+
+        let mut tree = scan_directory(root, false);
+        toggle_at_path_lazy(&mut tree, &root.join("docs"), false);
+        rescan_tree(&mut tree, true);
+
+        let flat: Vec<_> = tree.flatten(0).iter().map(|e| e.node.path.clone()).collect();
+        assert!(flat.contains(&root.join("docs/guide.md")));
+        assert!(flat.contains(&root.join("docs/.hidden.md")));
     }
 }
