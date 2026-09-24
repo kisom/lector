@@ -3,7 +3,7 @@ mod render;
 use std::io;
 use std::path::PathBuf;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
 use ratatui::prelude::*;
@@ -209,12 +209,9 @@ impl App {
                     self.focus = FocusedPane::Tree;
                     let clicked_row = (row - self.tree_area.y) as usize;
                     let flat_idx = self.tree_scroll + clicked_row;
-                    let flat = self.file_tree.flatten(0);
-
-                    if let Some(entry) = flat.get(flat_idx) {
+                    if let Some((path, is_dir, _)) = self.tree_entry_at(flat_idx) {
                         self.tree_cursor = flat_idx;
-                        let path = entry.node.path.clone();
-                        if entry.node.is_dir() {
+                        if is_dir {
                             self.toggle_dir(&path);
                         } else {
                             self.open_path(&path);
@@ -258,6 +255,11 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        // Some platforms (Windows, or terminals using the kitty keyboard
+        // protocol) also report key releases; act only on presses.
+        if key.kind == KeyEventKind::Release {
+            return;
+        }
         // Annotation input mode
         if let Some(ref mut input) = self.annotation_input {
             match key.code {
@@ -309,10 +311,21 @@ impl App {
         }
     }
 
-    fn handle_action(&mut self, action: Action) {
-        let flat = self.file_tree.flatten(0);
-        let flat_len = flat.len();
+    /// Path, is-directory and is-expanded state of the tree entry at `idx`.
+    fn tree_entry_at(&self, idx: usize) -> Option<(PathBuf, bool, bool)> {
+        self.file_tree
+            .flatten(0)
+            .get(idx)
+            .map(|e| (e.node.path.clone(), e.node.is_dir(), e.node.is_expanded()))
+    }
 
+    /// Keep the tree cursor within the visible entries after the tree shrinks.
+    fn clamp_tree_cursor(&mut self) {
+        let len = self.file_tree.flatten(0).len();
+        self.tree_cursor = self.tree_cursor.min(len.saturating_sub(1));
+    }
+
+    fn handle_action(&mut self, action: Action) {
         match action {
             Action::ToggleFocus => {
                 let mut visible = Vec::new();
@@ -330,9 +343,9 @@ impl App {
             Action::ShowHelp => self.show_help = !self.show_help,
             Action::ReloadFile => {
                 if self.focus == FocusedPane::Tree {
-                    // Refresh tree
-                    let root = self.file_tree.path.clone();
-                    self.file_tree = tree_fs::scan_directory(&root, self.show_hidden);
+                    // Refresh tree, keeping expanded directories open
+                    tree_fs::rescan_tree(&mut self.file_tree, self.show_hidden);
+                    self.clamp_tree_cursor();
                     self.resync_watcher();
                 } else if let Some(ref path) = self.current_file {
                     // Reload document
@@ -341,6 +354,9 @@ impl App {
                     self.document = Some(doc);
                     self.rendered_lines = lines;
                     self.toc_headings = headings;
+                    self.toc_cursor = self.toc_cursor.min(self.toc_headings.len().saturating_sub(1));
+                    self.refresh_toc_entries();
+                    self.scroll_offset = self.scroll_offset.min(self.max_scroll());
                 }
             }
             Action::Search => {
@@ -378,11 +394,11 @@ impl App {
                 }
             }
             Action::TreeSetRoot => {
-                if let Some(entry) = flat.get(self.tree_cursor) {
-                    let dir = if entry.node.is_dir() {
-                        entry.node.path.clone()
+                if let Some((path, is_dir, _)) = self.tree_entry_at(self.tree_cursor) {
+                    let dir = if is_dir {
+                        path
                     } else {
-                        entry.node.path.parent().unwrap_or(&entry.node.path).to_path_buf()
+                        path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
                     };
                     let root = lector_core::tree::git::find_git_root(&dir).unwrap_or(dir);
                     self.file_tree = tree_fs::scan_directory(&root, self.show_hidden);
@@ -392,13 +408,13 @@ impl App {
                             tree_fs::expand_to_path_lazy(&mut self.file_tree, cf, self.show_hidden);
                         }
                     }
+                    self.resync_watcher();
                 }
             }
             Action::ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
-                let root = self.file_tree.path.clone();
-                self.file_tree = tree_fs::scan_directory(&root, self.show_hidden);
-                self.tree_cursor = 0;
+                tree_fs::rescan_tree(&mut self.file_tree, self.show_hidden);
+                self.clamp_tree_cursor();
                 self.resync_watcher();
             }
             Action::ToggleToc => {
@@ -446,7 +462,7 @@ impl App {
                     if self.toc_cursor + 1 < self.toc_headings.len() {
                         self.toc_cursor += 1;
                     }
-                } else if self.tree_cursor + 1 < flat_len {
+                } else if self.tree_cursor + 1 < self.file_tree.flatten(0).len() {
                     self.tree_cursor += 1;
                 }
             }
@@ -459,21 +475,15 @@ impl App {
             }
             Action::TreeExpand => {
                 if !self.toc_has_focus() {
-                    if let Some(entry) = flat.get(self.tree_cursor) {
-                        if entry.node.is_dir() && !entry.node.is_expanded() {
-                            let path = entry.node.path.clone();
-                            self.toggle_dir(&path);
-                        }
+                    if let Some((path, true, false)) = self.tree_entry_at(self.tree_cursor) {
+                        self.toggle_dir(&path);
                     }
                 }
             }
             Action::TreeCollapse => {
                 if !self.toc_has_focus() {
-                    if let Some(entry) = flat.get(self.tree_cursor) {
-                        if entry.node.is_dir() && entry.node.is_expanded() {
-                            let path = entry.node.path.clone();
-                            self.toggle_dir(&path);
-                        }
+                    if let Some((path, true, true)) = self.tree_entry_at(self.tree_cursor) {
+                        self.toggle_dir(&path);
                     }
                 }
             }
@@ -483,9 +493,8 @@ impl App {
                     if let Some(heading) = self.toc_headings.get(self.toc_cursor) {
                         self.scroll_offset = heading.line_index;
                     }
-                } else if let Some(entry) = flat.get(self.tree_cursor) {
-                    let path = entry.node.path.clone();
-                    if entry.node.is_dir() {
+                } else if let Some((path, is_dir, _)) = self.tree_entry_at(self.tree_cursor) {
+                    if is_dir {
                         self.toggle_dir(&path);
                     } else {
                         self.open_path(&path);
@@ -641,9 +650,20 @@ impl App {
         let flat = self.file_tree.flatten(0);
         let is_focused = self.focus == FocusedPane::Tree;
 
-        let items: Vec<ListItem> = flat
+        // Scroll tree to keep cursor visible
+        let visible_height = area.height as usize;
+        let tree_scroll = if self.tree_cursor >= visible_height {
+            self.tree_cursor - visible_height + 1
+        } else {
+            0
+        };
+
+        // Only build list items for the rows that fit on screen.
+        let visible_items: Vec<ListItem> = flat
             .iter()
             .enumerate()
+            .skip(tree_scroll)
+            .take(visible_height)
             .map(|(idx, entry)| {
                 let indent = "  ".repeat(entry.depth);
                 let icon = if entry.node.is_dir() {
@@ -679,20 +699,7 @@ impl App {
         };
 
         self.tree_area = area;
-
-        // Scroll tree to keep cursor visible
-        let visible_height = area.height as usize;
-        let tree_scroll = if self.tree_cursor >= visible_height {
-            self.tree_cursor - visible_height + 1
-        } else {
-            0
-        };
         self.tree_scroll = tree_scroll;
-
-        let visible_items: Vec<ListItem> = items
-            .into_iter()
-            .skip(tree_scroll)
-            .collect();
 
         let list = List::new(visible_items).block(
             Block::default()
@@ -742,10 +749,13 @@ impl App {
             Style::default().fg(Color::DarkGray)
         };
 
+        // Each line occupies at least one row, so no more than `height`
+        // lines can be visible; avoid cloning the rest of the document.
         let visible_lines: Vec<Line> = self
             .rendered_lines
             .iter()
             .skip(self.scroll_offset)
+            .take(self.viewer_height)
             .cloned()
             .collect();
 
@@ -948,6 +958,16 @@ fn load_and_render(path: &std::path::Path) -> (Document, Vec<Line<'static>>, Vec
 }
 
 
+/// Restore the terminal to its normal state.
+fn restore_terminal() {
+    let _ = execute!(
+        io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        LeaveAlternateScreen,
+    );
+    let _ = disable_raw_mode();
+}
+
 fn main() -> io::Result<()> {
     if std::env::args().any(|a| a == "--version" || a == "-V") {
         println!("clector {}", env!("LECTOR_VERSION"));
@@ -958,6 +978,13 @@ fn main() -> io::Result<()> {
     let mut app = App::new(path);
     app.refresh_toc_entries();
 
+    // Leave the terminal usable if we panic mid-session.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        default_hook(info);
+    }));
+
     // Set up terminal
     enable_raw_mode()?;
     execute!(
@@ -965,11 +992,24 @@ fn main() -> io::Result<()> {
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
     )?;
+    let result = run(&mut app);
+    restore_terminal();
+
+    // Save config on exit
+    let _ = app.config.save();
+
+    result
+}
+
+fn run(app: &mut App) -> io::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    // Main loop — no mouse capture so terminal-native text selection works
+    let mut needs_redraw = true;
     while app.running {
-        terminal.draw(|frame| app.draw(frame))?;
+        if needs_redraw {
+            terminal.draw(|frame| app.draw(frame))?;
+            needs_redraw = false;
+        }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
@@ -977,28 +1017,22 @@ fn main() -> io::Result<()> {
                 Event::Mouse(mouse) => app.handle_mouse(mouse.kind, mouse.column, mouse.row),
                 _ => {}
             }
+            needs_redraw = true;
         }
 
         // Poll file watcher for tree updates
         if let (Some(handle), Some(rx)) = (&app.watcher_handle, &app.watcher_rx) {
             let changed = tree_watch::drain_events(rx, &handle.watched_dirs);
-            let show_hidden = app.show_hidden;
-            for dir in changed {
-                tree_fs::refresh_directory(&mut app.file_tree, &dir, show_hidden);
+            if !changed.is_empty() {
+                let show_hidden = app.show_hidden;
+                for dir in changed {
+                    tree_fs::refresh_directory(&mut app.file_tree, &dir, show_hidden);
+                }
+                app.clamp_tree_cursor();
+                needs_redraw = true;
             }
         }
     }
-
-    // Restore terminal
-    execute!(
-        io::stdout(),
-        crossterm::event::DisableMouseCapture,
-        LeaveAlternateScreen,
-    )?;
-    disable_raw_mode()?;
-
-    // Save config on exit
-    let _ = app.config.save();
 
     Ok(())
 }
