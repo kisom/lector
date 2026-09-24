@@ -30,6 +30,9 @@ struct AppState {
     annotations: Option<AnnotationStore>,
     file_tree: TreeNode,
     current_file: Option<PathBuf>,
+    /// The currently displayed document and its rendered HTML, kept so the
+    /// ToC can be built without re-reading and re-rendering the file.
+    current_doc: Option<(Document, String)>,
     initial_path: Option<PathBuf>,
     watcher: Option<tree_watch::WatcherHandle>,
     show_hidden: bool,
@@ -53,9 +56,32 @@ struct TreeResponse {
 #[derive(Serialize)]
 struct DocumentResponse {
     html: String,
+    /// Canonical path of the opened file (may differ from the requested path,
+    /// e.g. after `~` expansion or when a directory's README was opened).
+    path: String,
     filename: String,
     format: String,
     relative_path: String,
+}
+
+/// Load and render `file_path`, make it the current document, and build the
+/// response for the frontend.
+fn load_document(state: &mut AppState, file_path: PathBuf) -> Result<DocumentResponse, String> {
+    let doc = Document::load(&file_path).map_err(|e| e.to_string())?;
+    let html = render_to_html(&doc, &file_path);
+    let response = DocumentResponse {
+        html: html.clone(),
+        path: file_path.to_string_lossy().into_owned(),
+        filename: file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        format: format!("{:?}", doc.format),
+        relative_path: display_relative_path(&file_path, &state.file_tree.path),
+    };
+    state.current_file = Some(file_path);
+    state.current_doc = Some((doc, html));
+    Ok(response)
 }
 
 /// Compute a display path like "project/docs/file.md" for the window title.
@@ -123,47 +149,25 @@ fn toggle_dir(path: String, state: tauri::State<'_, Mutex<AppState>>) {
 #[tauri::command]
 fn open_file(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<DocumentResponse, String> {
     let mut state = state.lock().unwrap();
-    let file_path = PathBuf::from(&path);
-
-    // Save position of previous file
-    if let (Some(positions), Some(prev)) = (&state.positions, &state.current_file) {
-        let _ = positions.save(prev, 0.0);
-    }
-
-    let doc = Document::load(&file_path).map_err(|e| e.to_string())?;
-    let html = render_to_html(&doc, &file_path);
-    let filename = file_path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let format = format!("{:?}", doc.format);
-    let relative_path = display_relative_path(&file_path, &state.file_tree.path);
-
-    state.current_file = Some(file_path);
-
-    Ok(DocumentResponse {
-        html,
-        filename,
-        format,
-        relative_path,
-    })
+    // The frontend saves the previous file's scroll position before calling
+    // this, so nothing needs to be persisted here.
+    load_document(&mut state, PathBuf::from(&path))
 }
 
 #[tauri::command]
 fn reload_file(state: tauri::State<'_, Mutex<AppState>>) -> Result<Option<DocumentResponse>, String> {
-    let state = state.lock().unwrap();
-    let Some(ref file_path) = state.current_file else {
+    let mut state = state.lock().unwrap();
+    let Some(file_path) = state.current_file.clone() else {
         return Ok(None);
     };
-    let doc = Document::load(file_path).map_err(|e| e.to_string())?;
-    let html = render_to_html(&doc, file_path);
-    let filename = file_path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let format = format!("{:?}", doc.format);
-    let relative_path = display_relative_path(file_path, &state.file_tree.path);
-    Ok(Some(DocumentResponse { html, filename, format, relative_path }))
+    load_document(&mut state, file_path).map(Some)
+}
+
+#[tauri::command]
+fn close_file(state: tauri::State<'_, Mutex<AppState>>) {
+    let mut state = state.lock().unwrap();
+    state.current_file = None;
+    state.current_doc = None;
 }
 
 /// Set a new tree root. If path is a file, uses its parent directory.
@@ -187,47 +191,16 @@ fn set_tree_root(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Tree
         }
     }
     resync_watcher(&mut state);
-    let flat = state.file_tree.flatten(0);
-    let entries = flat
-        .iter()
-        .map(|entry| TreeEntry {
-            name: entry.node.name.clone(),
-            path: entry.node.path.to_string_lossy().into_owned(),
-            depth: entry.depth,
-            is_dir: entry.node.is_dir(),
-            is_expanded: entry.node.is_expanded(),
-            is_current: state
-                .current_file
-                .as_ref()
-                .is_some_and(|cf| cf == &entry.node.path),
-        })
-        .collect();
-    TreeResponse { entries }
+    tree_response(&state)
 }
 
 #[tauri::command]
 fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     let mut state = state.lock().unwrap();
     let show_hidden = state.show_hidden;
-    let root = state.file_tree.path.clone();
-    state.file_tree = tree_fs::scan_directory(&root, show_hidden);
+    tree_fs::rescan_tree(&mut state.file_tree, show_hidden);
     resync_watcher(&mut state);
-    let flat = state.file_tree.flatten(0);
-    let entries = flat
-        .iter()
-        .map(|entry| TreeEntry {
-            name: entry.node.name.clone(),
-            path: entry.node.path.to_string_lossy().into_owned(),
-            depth: entry.depth,
-            is_dir: entry.node.is_dir(),
-            is_expanded: entry.node.is_expanded(),
-            is_current: state
-                .current_file
-                .as_ref()
-                .is_some_and(|cf| cf == &entry.node.path),
-        })
-        .collect();
-    TreeResponse { entries }
+    tree_response(&state)
 }
 
 /// Toggle whether hidden filesystem entries are displayed in the tree.
@@ -235,8 +208,8 @@ fn refresh_tree(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
 fn toggle_hidden(state: tauri::State<'_, Mutex<AppState>>) -> TreeResponse {
     let mut state = state.lock().unwrap();
     state.show_hidden = !state.show_hidden;
-    let root = state.file_tree.path.clone();
-    state.file_tree = tree_fs::scan_directory(&root, state.show_hidden);
+    let show_hidden = state.show_hidden;
+    tree_fs::rescan_tree(&mut state.file_tree, show_hidden);
     resync_watcher(&mut state);
     tree_response(&state)
 }
@@ -258,36 +231,14 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
         resync_watcher(&mut state);
 
         // Look for a README in the root
-        let readme = tree_fs::find_readme(&root);
-        if let Some(readme_path) = readme {
-            let doc = Document::load(&readme_path).map_err(|e| e.to_string())?;
-            let html = render_to_html(&doc, &readme_path);
-            let filename = readme_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let format = format!("{:?}", doc.format);
-            let relative_path = display_relative_path(&readme_path, &state.file_tree.path);
-            state.current_file = Some(readme_path);
-            return Ok(Some(DocumentResponse { html, filename, format, relative_path }));
+        if let Some(readme_path) = tree_fs::find_readme(&root) {
+            return load_document(&mut state, readme_path).map(Some);
         }
 
         state.current_file = None;
+        state.current_doc = None;
         Ok(None)
     } else if file_path.is_file() {
-        // Save position of previous file
-        if let (Some(positions), Some(prev)) = (&state.positions, &state.current_file) {
-            let _ = positions.save(prev, 0.0);
-        }
-
-        let doc = Document::load(&file_path).map_err(|e| e.to_string())?;
-        let html = render_to_html(&doc, &file_path);
-        let filename = file_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let format = format!("{:?}", doc.format);
-
         // Rescan tree if the file is under a different root
         let new_root = git::find_git_root(&file_path)
             .or_else(|| file_path.parent().map(|p| p.to_path_buf()))
@@ -298,9 +249,7 @@ fn open_path(path: String, state: tauri::State<'_, Mutex<AppState>>) -> Result<O
             resync_watcher(&mut state);
         }
 
-        let relative_path = display_relative_path(&file_path, &state.file_tree.path);
-        state.current_file = Some(file_path);
-        Ok(Some(DocumentResponse { html, filename, format, relative_path }))
+        load_document(&mut state, file_path).map(Some)
     } else {
         Err(format!("Path not found: {}", file_path.display()))
     }
@@ -476,10 +425,7 @@ struct TocEntry {
 #[tauri::command]
 fn get_headings(state: tauri::State<'_, Mutex<AppState>>) -> Vec<TocEntry> {
     let state = state.lock().unwrap();
-    let Some(ref file) = state.current_file else {
-        return Vec::new();
-    };
-    let Ok(doc) = Document::load(file) else {
+    let (Some(file), Some((doc, html))) = (&state.current_file, &state.current_doc) else {
         return Vec::new();
     };
     // For plain source files, build the ToC from code definitions instead of
@@ -497,8 +443,7 @@ fn get_headings(state: tauri::State<'_, Mutex<AppState>>) -> Vec<TocEntry> {
                 .collect();
         }
     }
-    let html = render_to_html(&doc, file);
-    extract_headings(&html)
+    extract_headings(html)
 }
 
 fn extract_headings(html: &str) -> Vec<TocEntry> {
@@ -595,6 +540,26 @@ mod tests {
         assert!(!entries.is_empty());
         assert!(!entries[0].id.is_empty(), "heading id should not be empty");
     }
+
+    #[test]
+    fn line_wrappers_stay_balanced_across_multiline_spans() {
+        let html = "<span class=\"c\">/* a\nb */</span>\nx";
+        let out = wrap_lines_with_numbers(html);
+        assert_eq!(
+            out,
+            "<span class=\"line\" id=\"line-1\" data-ln=\"1\"><span class=\"c\">/* a</span></span>\n\
+             <span class=\"line\" id=\"line-2\" data-ln=\"2\"><span class=\"c\">b */</span></span>\n\
+             <span class=\"line\" id=\"line-3\" data-ln=\"3\">x</span>"
+        );
+    }
+
+    #[test]
+    fn percent_decoding() {
+        assert_eq!(percent_decode("my%20notes.md"), "my notes.md");
+        assert_eq!(percent_decode("caf%C3%A9"), "caf\u{e9}");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%zz%\u{e9}"), "%zz%\u{e9}");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -638,34 +603,62 @@ fn delete_annotation(id: i64, state: tauri::State<'_, Mutex<AppState>>) -> Resul
     store.delete(id).map_err(|e| e.to_string())
 }
 
-/// Resolve a link: if it's a local file, return its path. Otherwise open in browser.
+/// Resolve a link: if it's a local file, return its path. Otherwise open
+/// web and mail links in the system browser.
 #[tauri::command]
 fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
+    let lower = url.to_ascii_lowercase();
+    if ["http://", "https://", "mailto:"].iter().any(|s| lower.starts_with(s)) {
+        let _ = open::that(&url);
+        return None;
+    }
+
+    // Local link: drop any `#fragment` or `?query` and undo percent-encoding
+    // (e.g. `my%20notes.md#usage` → `my notes.md`).
+    let local = url.strip_prefix("file://").unwrap_or(&url);
+    let local = local.split(['#', '?']).next().unwrap_or_default();
+    if local.is_empty() {
+        return None;
+    }
+    let as_path = PathBuf::from(percent_decode(local));
+
     // Absolute file path
-    let as_path = PathBuf::from(&url);
-    if as_path.is_absolute() && as_path.exists() {
-        return Some(as_path.to_string_lossy().into_owned());
+    if as_path.is_absolute() {
+        return as_path.exists().then(|| as_path.to_string_lossy().into_owned());
     }
 
     // Relative path — resolve against current file's directory
     let state = state.lock().unwrap();
-    if let Some(ref current) = state.current_file {
-        if let Some(dir) = current.parent() {
-            let resolved = dir.join(&url);
-            if resolved.exists() {
-                return Some(
-                    std::fs::canonicalize(&resolved)
-                        .unwrap_or(resolved)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+    let dir = state.current_file.as_ref()?.parent()?;
+    let resolved = dir.join(&as_path);
+    resolved.exists().then(|| {
+        std::fs::canonicalize(&resolved)
+            .unwrap_or(resolved)
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+
+/// Decode `%XX` escapes in a URL path. Invalid escapes are kept verbatim.
+fn percent_decode(s: &str) -> String {
+    fn hex(b: u8) -> Option<u8> {
+        (b as char).to_digit(16).map(|d| d as u8)
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
+                i += 3;
+                continue;
             }
         }
+        out.push(bytes[i]);
+        i += 1;
     }
-
-    // Not a local file — open in browser
-    let _ = open::that(&url);
-    None
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 // -- Rendering --
@@ -758,23 +751,49 @@ fn html_pre(source: &str) -> String {
 
 /// Wrap each line of HTML content in a `<span class="line">` with a `data-ln` attribute
 /// for CSS-driven line number display.
+///
+/// Syntax-highlighted HTML can contain spans that cross line boundaries (block
+/// comments, multi-line strings). Those are closed at the end of each line and
+/// reopened on the next, so every line wrapper stays properly nested.
 fn wrap_lines_with_numbers(html: &str) -> String {
+    use std::fmt::Write;
+
     let mut result = String::with_capacity(html.len() + html.len() / 4);
+    // Opening tags of spans still open at the end of the previous line.
+    let mut open_spans: Vec<&str> = Vec::new();
     for (i, line) in html.split('\n').enumerate() {
         if i > 0 {
             result.push('\n');
         }
-        result.push_str(&format!(
-            "<span class=\"line\" id=\"line-{}\" data-ln=\"{}\">",
-            i + 1,
-            i + 1
-        ));
+        let _ = write!(result, "<span class=\"line\" id=\"line-{0}\" data-ln=\"{0}\">", i + 1);
+        for tag in &open_spans {
+            result.push_str(tag);
+        }
         result.push_str(line);
+        track_open_spans(line, &mut open_spans);
+        for _ in &open_spans {
+            result.push_str("</span>");
+        }
         result.push_str("</span>");
     }
     result
 }
 
+/// Update the stack of open `<span ...>` tags after the given HTML fragment.
+fn track_open_spans<'a>(fragment: &'a str, open: &mut Vec<&'a str>) {
+    let mut rest = fragment;
+    while let Some(i) = rest.find('<') {
+        rest = &rest[i..];
+        let end = rest.find('>').map_or(rest.len(), |e| e + 1);
+        let tag = &rest[..end];
+        if tag.starts_with("</span") {
+            open.pop();
+        } else if tag.starts_with("<span") {
+            open.push(tag);
+        }
+        rest = &rest[end..];
+    }
+}
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -832,7 +851,11 @@ fn main() {
         }
     }
 
-    let path = std::env::args().nth(1).map(PathBuf::from);
+    // First argument that isn't a flag (e.g. `lector --no-detach README.md`).
+    let path = std::env::args()
+        .skip(1)
+        .find(|a| !a.starts_with("--"))
+        .map(PathBuf::from);
     let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
 
     let config = Config::load();
@@ -864,6 +887,7 @@ fn main() {
         annotations,
         file_tree,
         current_file: None,
+        current_doc: None,
         initial_path,
         watcher,
         show_hidden: false,
@@ -878,6 +902,7 @@ fn main() {
             open_file,
             open_path,
             reload_file,
+            close_file,
             refresh_tree,
             toggle_hidden,
             set_tree_root,

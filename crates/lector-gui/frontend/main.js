@@ -49,9 +49,37 @@ async function loadTree() {
   renderTree();
 }
 
+// Keep the cursor on a real entry after the tree shrinks (collapse, deletion).
+function clampTreeCursor() {
+  treeCursor = Math.max(0, Math.min(treeCursor, flatTree.length - 1));
+}
+
+// Move the tree selection highlight without rebuilding the whole tree DOM.
+function updateTreeSelection() {
+  const pane = document.getElementById('tree-pane');
+  pane.querySelectorAll('.tree-entry.selected').forEach(el => el.classList.remove('selected'));
+  const entries = pane.querySelectorAll('.tree-entry');
+  if (focusedPane === 'tree' && entries[treeCursor]) {
+    entries[treeCursor].classList.add('selected');
+  }
+  scrollTreeCursorIntoView();
+}
+
+// Move the ToC selection highlight without rebuilding the ToC DOM.
+function updateTocSelection() {
+  const pane = document.getElementById('toc-pane');
+  pane.querySelectorAll('.toc-entry.selected').forEach(el => el.classList.remove('selected'));
+  const entries = pane.querySelectorAll('.toc-entry');
+  if (focusedPane === 'toc' && entries[tocCursor]) {
+    entries[tocCursor].classList.add('selected');
+    entries[tocCursor].scrollIntoView({ block: 'nearest' });
+  }
+}
+
 function renderTree() {
   const pane = document.getElementById('tree-pane');
   pane.innerHTML = '';
+  clampTreeCursor();
 
   flatTree.forEach((entry, idx) => {
     const btn = document.createElement('button');
@@ -99,6 +127,23 @@ async function saveCurrentPosition() {
   }
 }
 
+// Display a document returned by open_file/open_path and restore its
+// saved scroll position, ToC and annotations.
+async function showDocument(response) {
+  currentFile = response.path;
+  document.getElementById('viewer-header').textContent = response.filename;
+  document.getElementById('viewer-content').innerHTML = response.html;
+  document.title = 'Lector - ' + response.relative_path;
+
+  // Restore saved scroll position
+  const saved = await invoke('load_position', { path: currentFile });
+  document.getElementById('viewer-content').scrollTop = saved != null ? saved : 0;
+
+  focusedPane = 'viewer';
+  if (showToc) refreshToc();
+  applyAnnotations();
+}
+
 async function openFile(path) {
   // Save position of previous file
   await saveCurrentPosition();
@@ -116,27 +161,15 @@ async function openFile(path) {
     await loadTree();
     return;
   }
-  currentFile = path;
-  document.getElementById('viewer-header').textContent = response.filename;
-  document.getElementById('viewer-content').innerHTML = response.html;
-  document.title = 'Lector - ' + response.relative_path;
-
-  // Restore saved scroll position
-  const saved = await invoke('load_position', { path });
-  if (saved != null) {
-    document.getElementById('viewer-content').scrollTop = saved;
-  } else {
-    document.getElementById('viewer-content').scrollTop = 0;
-  }
-
-  focusedPane = 'viewer';
+  await showDocument(response);
   await loadTree();
-  if (showToc) refreshToc();
-  applyAnnotations();
 }
 
 function closeFile() {
   saveCurrentPosition();
+  invoke('close_file');
+  if (CSS.highlights) CSS.highlights.clear();
+  activeAnnotationRanges = [];
   currentFile = null;
   document.getElementById('viewer-header').textContent = '';
   document.getElementById('viewer-content').innerHTML =
@@ -153,6 +186,8 @@ async function reloadFile() {
     document.getElementById('viewer-content').innerHTML = result.html;
     document.title = 'Lector - ' + result.relative_path;
     document.getElementById('viewer-content').scrollTop = scrollPos;
+    if (showToc) refreshToc();
+    applyAnnotations();
     showToast('Reloaded');
   }
 }
@@ -177,7 +212,6 @@ async function refreshTree() {
 async function toggleHidden() {
   const response = await invoke('toggle_hidden');
   flatTree = response.entries;
-  treeCursor = 0;
   renderTree();
 }
 
@@ -197,15 +231,11 @@ function hideOpenBar() {
 async function handleOpenPath(path) {
   if (!path) return;
   try {
+    await saveCurrentPosition();
     const result = await invoke('open_path', { path });
     if (result) {
-      // File was opened
-      currentFile = result.path || path;
-      document.getElementById('viewer-header').textContent = result.filename;
-      document.getElementById('viewer-content').innerHTML = result.html;
-      document.title = 'Lector - ' + result.relative_path;
-      document.getElementById('viewer-content').scrollTop = 0;
-      focusedPane = 'viewer';
+      // File (or a directory's README) was opened
+      await showDocument(result);
     } else {
       // Directory was changed
       currentFile = null;
@@ -720,13 +750,13 @@ document.addEventListener('keydown', (e) => {
     switch (e.key) {
       case 'n':
         if (focusedPane === 'viewer') scrollViewer(1);
-        else if (focusedPane === 'tree') { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); renderTree(); }
-        else if (focusedPane === 'toc') { tocCursor = Math.min(tocCursor + 1, tocEntries.length - 1); renderToc(); }
+        else if (focusedPane === 'tree') { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); updateTreeSelection(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.min(tocCursor + 1, tocEntries.length - 1); updateTocSelection(); }
         e.preventDefault(); return;
       case 'p':
         if (focusedPane === 'viewer') scrollViewer(-1);
-        else if (focusedPane === 'tree') { treeCursor = Math.max(treeCursor - 1, 0); renderTree(); }
-        else if (focusedPane === 'toc') { tocCursor = Math.max(tocCursor - 1, 0); renderToc(); }
+        else if (focusedPane === 'tree') { treeCursor = Math.max(treeCursor - 1, 0); updateTreeSelection(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.max(tocCursor - 1, 0); updateTocSelection(); }
         e.preventDefault(); return;
       case 'v':
         pageViewer(1);
@@ -816,19 +846,19 @@ document.addEventListener('keydown', (e) => {
         if (showToc) visible.push('toc');
         const idx = visible.indexOf(focusedPane);
         focusedPane = visible[(idx + 1) % visible.length];
-        renderTree();
-        if (showToc) renderToc();
+        updateTreeSelection();
+        if (showToc) updateTocSelection();
         e.preventDefault(); return;
       }
       case 'ArrowUp':
         if (focusedPane === 'viewer') scrollViewer(-1);
-        else if (focusedPane === 'tree') { treeCursor = Math.max(treeCursor - 1, 0); renderTree(); }
-        else if (focusedPane === 'toc') { tocCursor = Math.max(tocCursor - 1, 0); renderToc(); }
+        else if (focusedPane === 'tree') { treeCursor = Math.max(treeCursor - 1, 0); updateTreeSelection(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.max(tocCursor - 1, 0); updateTocSelection(); }
         e.preventDefault(); return;
       case 'ArrowDown':
         if (focusedPane === 'viewer') scrollViewer(1);
-        else if (focusedPane === 'tree') { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); renderTree(); }
-        else if (focusedPane === 'toc') { tocCursor = Math.min(tocCursor + 1, tocEntries.length - 1); renderToc(); }
+        else if (focusedPane === 'tree') { treeCursor = Math.min(treeCursor + 1, flatTree.length - 1); updateTreeSelection(); }
+        else if (focusedPane === 'toc') { tocCursor = Math.min(tocCursor + 1, tocEntries.length - 1); updateTocSelection(); }
         e.preventDefault(); return;
       case 'ArrowLeft':
         if (focusedPane === 'tree') {
@@ -886,7 +916,11 @@ function showAnnotationBar() {
   }
 
   const range = sel.getRangeAt(0);
-  const selectedText = sel.toString().trim();
+  // Range.toString() yields textContent, matching the offsets used when the
+  // annotation is re-applied (Selection.toString() may add rendered line
+  // breaks). Offsets skip any leading whitespace that the trim removes.
+  const rawText = range.toString();
+  const selectedText = rawText.trim();
   if (!selectedText) {
     showToast('Select text first');
     return;
@@ -896,7 +930,8 @@ function showAnnotationBar() {
   const preRange = document.createRange();
   preRange.setStart(viewer, 0);
   preRange.setEnd(range.startContainer, range.startOffset);
-  const startOffset = preRange.toString().length;
+  const leading = rawText.length - rawText.trimStart().length;
+  const startOffset = preRange.toString().length + leading;
   const endOffset = startOffset + selectedText.length;
 
   if (!currentFile) return;
@@ -1108,6 +1143,12 @@ document.getElementById('viewer-content').addEventListener('click', async (e) =>
     e.preventDefault();
     const href = link.getAttribute('href');
     if (!href) return;
+    if (href.startsWith('#')) {
+      // In-document anchor (footnotes, heading links)
+      const target = document.getElementById(decodeURIComponent(href.slice(1)));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     const localPath = await invoke('resolve_link', { url: href });
     if (localPath) {
       await handleOpenPath(localPath);
