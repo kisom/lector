@@ -98,12 +98,13 @@ fn ensure_populated(node: &mut TreeNode, show_hidden: bool) {
 }
 
 /// Expand a directory node, re-reading it from disk. Collapsed directories
-/// are not watched, so any cached listing may be stale.
+/// are not watched, so any cached listing may be stale — including the
+/// listings of descendants that kept their expanded flag while hidden under
+/// the collapsed node, which `rescan_tree` re-reads as well.
 fn expand_node(node: &mut TreeNode, show_hidden: bool) {
     if node.is_dir() {
         node.set_expanded(true);
-        let dir = node.path.clone();
-        populate_children(node, &dir, show_hidden);
+        rescan_tree(node, show_hidden);
     }
 }
 
@@ -383,6 +384,30 @@ mod tests {
             .map(|e| e.node.path.clone())
             .collect();
         assert!(flat.contains(&docs.join("two.md")));
+    }
+
+    #[test]
+    fn re_expanding_a_parent_rereads_expanded_descendants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let a = root.join("a");
+        let b = a.join("b");
+        fs::create_dir_all(&b).unwrap();
+        fs::write(b.join("one.md"), "1").unwrap();
+
+        let mut tree = scan_directory(root, false);
+        toggle_at_path_lazy(&mut tree, &a, false); // expand a
+        toggle_at_path_lazy(&mut tree, &b, false); // expand a/b
+        toggle_at_path_lazy(&mut tree, &a, false); // collapse a (b stays expanded)
+        fs::write(b.join("two.md"), "2").unwrap();
+        toggle_at_path_lazy(&mut tree, &a, false); // expand a again
+
+        let flat: Vec<_> = tree
+            .flatten(0)
+            .iter()
+            .map(|e| e.node.path.clone())
+            .collect();
+        assert!(flat.contains(&b.join("two.md")), "{flat:?}");
     }
 
     #[test]

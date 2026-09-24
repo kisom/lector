@@ -638,45 +638,68 @@ fn delete_annotation(id: i64, state: tauri::State<'_, Mutex<AppState>>) -> Resul
     store.delete(id).map_err(|e| e.to_string())
 }
 
-/// Resolve a link: if it's a local file, return its path. Otherwise open
-/// web and mail links in the system browser.
+/// A link that resolved to a local file.
+#[derive(Serialize)]
+struct LocalLink {
+    path: String,
+    /// The link's `#fragment` (without `#`), as written in the document.
+    fragment: Option<String>,
+}
+
+/// Resolve a link clicked in a document.
+///
+/// - `Ok(Some(link))`: a local file the frontend should open (then scroll to
+///   `link.fragment`, if any).
+/// - `Ok(None)`: a web or mail link, handed to the system browser.
+/// - `Err(message)`: a local link whose target does not exist.
 #[tauri::command]
-fn resolve_link(url: String, state: tauri::State<'_, Mutex<AppState>>) -> Option<String> {
+fn resolve_link(
+    url: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Option<LocalLink>, String> {
     let lower = url.to_ascii_lowercase();
     if ["http://", "https://", "mailto:"]
         .iter()
         .any(|s| lower.starts_with(s))
     {
-        let _ = open::that(&url);
-        return None;
+        open::that(&url).map_err(|e| format!("Could not open {url}: {e}"))?;
+        return Ok(None);
     }
 
-    // Local link: drop any `#fragment` or `?query` and undo percent-encoding
-    // (e.g. `my%20notes.md#usage` → `my notes.md`).
+    // Local link: split off `#fragment` and `?query`, and undo
+    // percent-encoding in the path (`my%20notes.md#usage` → `my notes.md`).
     let local = url.strip_prefix("file://").unwrap_or(&url);
-    let local = local.split(['#', '?']).next().unwrap_or_default();
+    let (local, fragment) = match local.split_once('#') {
+        Some((path, frag)) => (path, Some(frag.to_string()).filter(|f| !f.is_empty())),
+        None => (local, None),
+    };
+    let local = local.split('?').next().unwrap_or_default();
+    let not_found = || format!("Link target not found: {url}");
     if local.is_empty() {
-        return None;
+        return Err(not_found());
     }
     let as_path = PathBuf::from(percent_decode(local));
 
-    // Absolute file path
-    if as_path.is_absolute() {
-        return as_path
-            .exists()
-            .then(|| as_path.to_string_lossy().into_owned());
+    let resolved = if as_path.is_absolute() {
+        as_path
+    } else {
+        // Relative path — resolve against current file's directory
+        let state = state.lock().unwrap();
+        let dir = state
+            .current_file
+            .as_ref()
+            .and_then(|f| f.parent())
+            .ok_or_else(not_found)?;
+        dir.join(&as_path)
+    };
+    if !resolved.exists() {
+        return Err(not_found());
     }
-
-    // Relative path — resolve against current file's directory
-    let state = state.lock().unwrap();
-    let dir = state.current_file.as_ref()?.parent()?;
-    let resolved = dir.join(&as_path);
-    resolved.exists().then(|| {
-        std::fs::canonicalize(&resolved)
-            .unwrap_or(resolved)
-            .to_string_lossy()
-            .into_owned()
-    })
+    let path = std::fs::canonicalize(&resolved)
+        .unwrap_or(resolved)
+        .to_string_lossy()
+        .into_owned();
+    Ok(Some(LocalLink { path, fragment }))
 }
 
 /// Decode `%XX` escapes in a URL path. Invalid escapes are kept verbatim.

@@ -43,9 +43,19 @@ async function init() {
 }
 
 // Tree
-async function loadTree() {
+async function loadTree(preferPath) {
   const response = await invoke('get_tree');
-  flatTree = response.entries;
+  replaceFlatTree(response.entries, preferPath);
+}
+
+// Swap in a new tree listing and re-render, keeping the cursor on the entry
+// it was on (rows may have been inserted or removed above it). `preferPath`,
+// when given, is selected instead. Falls back to clamping the index.
+function replaceFlatTree(entries, preferPath) {
+  const target = preferPath || flatTree[treeCursor]?.path;
+  flatTree = entries;
+  const idx = target ? flatTree.findIndex(e => e.path === target) : -1;
+  if (idx >= 0) treeCursor = idx;
   renderTree();
 }
 
@@ -196,23 +206,21 @@ async function setTreeRootFromCursor() {
   const entry = flatTree[treeCursor];
   if (!entry) return;
   const response = await invoke('set_tree_root', { path: entry.path });
-  flatTree = response.entries;
+  // Stay on the chosen entry (the new root when a directory was chosen).
   treeCursor = 0;
-  renderTree();
+  replaceFlatTree(response.entries, entry.path);
   showToast('Root: ' + (flatTree[0]?.name || ''));
 }
 
 async function refreshTree() {
   const response = await invoke('refresh_tree');
-  flatTree = response.entries;
-  renderTree();
+  replaceFlatTree(response.entries);
   showToast('Tree refreshed');
 }
 
 async function toggleHidden() {
   const response = await invoke('toggle_hidden');
-  flatTree = response.entries;
-  renderTree();
+  replaceFlatTree(response.entries);
 }
 
 // Open path bar (C-x C-f) with tab completion
@@ -244,8 +252,7 @@ async function handleOpenPath(path) {
         '<p class="placeholder">Open a file from the tree to start reading.</p>';
       document.title = 'Lector';
     }
-    await loadTree();
-    treeCursor = 0;
+    await loadTree(currentFile);
   } catch (err) {
     showToast('Error: ' + err);
   }
@@ -631,6 +638,31 @@ function scrollToHeading(id) {
   target.style.transition = 'background 0.3s';
   target.style.background = 'var(--bg-selected)';
   setTimeout(() => { target.style.background = ''; }, 1500);
+}
+
+// Find the element a link fragment refers to. Fragments may be written
+// percent-encoded or not, and comrak prefixes heading ids with `heading-`
+// while heading links use the bare slug.
+function findFragmentTarget(fragment) {
+  let decoded = fragment;
+  try {
+    decoded = decodeURIComponent(fragment);
+  } catch (_) {
+    // Not valid percent-encoding (e.g. `#100%`); use it as written.
+  }
+  for (const id of [fragment, decoded]) {
+    for (const prefix of ['', 'heading-']) {
+      const el = document.getElementById(prefix + id);
+      if (el) return el;
+    }
+  }
+  return null;
+}
+
+function scrollToFragment(fragment) {
+  const el = findFragmentTarget(fragment);
+  if (el) scrollToHeading(el.id);
+  else showToast('Anchor not found: #' + fragment);
 }
 
 function scrollToAnnotation(ann) {
@@ -1145,13 +1177,20 @@ document.getElementById('viewer-content').addEventListener('click', async (e) =>
     if (!href) return;
     if (href.startsWith('#')) {
       // In-document anchor (footnotes, heading links)
-      const target = document.getElementById(decodeURIComponent(href.slice(1)));
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollToFragment(href.slice(1));
       return;
     }
-    const localPath = await invoke('resolve_link', { url: href });
-    if (localPath) {
-      await handleOpenPath(localPath);
+    let target;
+    try {
+      target = await invoke('resolve_link', { url: href });
+    } catch (err) {
+      showToast(String(err));
+      return;
+    }
+    if (target) {
+      // Local file: open it, then jump to `#fragment` if the link had one.
+      await handleOpenPath(target.path);
+      if (target.fragment) scrollToFragment(target.fragment);
     }
   }
 });
