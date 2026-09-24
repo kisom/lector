@@ -91,13 +91,18 @@ impl TreeNode {
     /// Collect all visible (flattened) entries with their depth level.
     /// Used by the GUI to render the tree as a flat list.
     pub fn flatten(&self, depth: usize) -> Vec<FlatEntry<'_>> {
-        let mut entries = vec![FlatEntry { node: self, depth }];
+        let mut entries = Vec::new();
+        self.flatten_into(depth, &mut entries);
+        entries
+    }
+
+    fn flatten_into<'a>(&'a self, depth: usize, out: &mut Vec<FlatEntry<'a>>) {
+        out.push(FlatEntry { node: self, depth });
         if let NodeKind::Directory { children, expanded: true } = &self.kind {
             for child in children {
-                entries.extend(child.flatten(depth + 1));
+                child.flatten_into(depth + 1, out);
             }
         }
-        entries
     }
 }
 

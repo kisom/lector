@@ -16,9 +16,12 @@ pub fn extract_metadata(source: &str) -> (Vec<(String, String)>, &str) {
     let mut meta = Vec::new();
     let mut end = 0;
 
-    for line in source.lines() {
+    // Track byte offsets with the real line terminators (`\n` or `\r\n`);
+    // `str::lines` strips them, which would miscount CRLF files.
+    for raw in source.split_inclusive('\n') {
+        let line = raw.trim_end_matches('\n').trim_end_matches('\r');
         if line.is_empty() {
-            end += line.len() + 1;
+            end += raw.len();
             break;
         }
 
@@ -31,7 +34,7 @@ pub fn extract_metadata(source: &str) -> (Vec<(String, String)>, &str) {
             {
                 let value = line[colon_pos + 2..].trim();
                 meta.push((key.to_string(), value.to_string()));
-                end += line.len() + 1;
+                end += raw.len();
                 continue;
             }
         }
@@ -86,6 +89,15 @@ mod tests {
         let (meta, content) = extract_metadata(source);
         assert!(meta.is_empty());
         assert_eq!(content, source);
+    }
+
+    #[test]
+    fn extracts_metadata_with_crlf_line_endings() {
+        let source = "Title: Caf\u{e9}\r\nA: 1\r\nB: 2\r\nC: \u{e9}\r\n\r\n# Content\r\n";
+        let (meta, content) = extract_metadata(source);
+        assert_eq!(meta.len(), 4);
+        assert_eq!(meta[0], ("Title".to_string(), "Caf\u{e9}".to_string()));
+        assert_eq!(content, "# Content\r\n");
     }
 
     #[test]
